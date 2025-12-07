@@ -11,6 +11,7 @@ local eventFrame = CreateFrame("Frame")
 local partnerBattleTag
 local partnerGameAccountID
 local lastEchoedGuildText
+local recentMessages = {}
 
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
@@ -137,6 +138,13 @@ local function mirrorToGuild(senderName, guildName, factionTag, messageText, sou
     local short = guildShortNames[guildName] or guildName or ""
     local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
     local line = guildTag .. senderName .. ": " .. messageText
+
+    local fingerprint = guildTag .. senderName .. ":" .. messageText
+    local now = GetTime()
+    if recentMessages[fingerprint] and now - recentMessages[fingerprint] < 2 then
+        return
+    end
+    recentMessages[fingerprint] = now
 
     lastEchoedGuildText = line
     SendChatMessage(line, "GUILD")
