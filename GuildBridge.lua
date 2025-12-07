@@ -25,27 +25,37 @@ end
 local function findBridgeClubAndStream()
     local clubs = C_Club.GetSubscribedClubs()
     if not clubs then
+        print("GuildBridge: no clubs returned by API.")
         return false
     end
+
+    bridgeClubId = nil
+    bridgeStreamId = nil
 
     for _, club in ipairs(clubs) do
         if club.name == bridgeCommunityName then
             bridgeClubId = club.clubId
             local streams = C_Club.GetStreams(bridgeClubId)
             if not streams then
+                print("GuildBridge: found community but no streams.")
                 return false
             end
             for _, stream in ipairs(streams) do
                 if stream.name == bridgeStreamName then
                     bridgeStreamId = stream.streamId
+                    print("GuildBridge: found community and stream:", bridgeClubId, bridgeStreamId)
                     return true
                 end
             end
+            print("GuildBridge: community found but stream '" .. bridgeStreamName .. "' not found.")
+            return false
         end
     end
 
+    print("GuildBridge: community '" .. bridgeCommunityName .. "' not found.")
     return false
 end
+
 
 local function addBridgeMessage(senderName, guildName, factionTag, messageText)
     if not scrollFrame then
@@ -61,6 +71,7 @@ end
 
 local function sendCommunityPayload(originName, messageText, sourceType)
     if not bridgeClubId or not bridgeStreamId then
+        print("GuildBridge: no club/stream ID, not sending.")
         return
     end
     if not messageText or messageText == "" then
@@ -82,13 +93,23 @@ local function sendCommunityPayload(originName, messageText, sourceType)
         .. "|"
         .. messageText
 
-    C_Club.SendMessage(bridgeClubId, bridgeStreamId, payload)
+    print("GuildBridge: calling C_Club.SendMessage", bridgeClubId, bridgeStreamId, payload)
+
+    local ok, err = pcall(C_Club.SendMessage, bridgeClubId, bridgeStreamId, payload)
+    if not ok then
+        print("GuildBridge: C_Club.SendMessage error:", err)
+    else
+        print("GuildBridge: C_Club.SendMessage succeeded.")
+    end
 end
+
 
 local function sendCommunityFromUI(messageText)
     local originName = UnitName("player")
+    print("GuildBridge: sending from UI:", messageText, "club", bridgeClubId, "stream", bridgeStreamId)
     sendCommunityPayload(originName, messageText, "U")
 end
+
 
 local function mirrorToGuild(senderName, guildName, factionTag, messageText, sourceType)
     if not GuildBridgeDB.bridgeEnabled then
@@ -200,8 +221,9 @@ end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
-eventFrame:RegisterEvent("CHAT_MSG_COMMUNITIES_CHANNEL")
+eventFrame:RegisterEvent("CLUB_MESSAGE_ADDED")
 eventFrame:RegisterEvent("CHAT_MSG_GUILD")
+
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -212,27 +234,40 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
     elseif event == "PLAYER_LOGIN" then
         findBridgeClubAndStream()
-    elseif event == "CHAT_MSG_COMMUNITIES_CHANNEL" then
-        local text, _, _, _, _, _, _, _, _, _, _, _, _, clubId, streamId = ...
-        if clubId ~= bridgeClubId or streamId ~= bridgeStreamId then
-            return
-        end
-        if not text or text:sub(1, #bridgePayloadPrefix) ~= bridgePayloadPrefix then
-            return
-        end
+  elseif event == "CLUB_MESSAGE_ADDED" then
+    local clubId, streamId, messageId = ...
+    print("GuildBridge: CLUB_MESSAGE_ADDED", clubId, streamId, messageId)
 
-        local payload = text:sub(#bridgePayloadPrefix + 1)
-        local guildPart, factionPart, originPart, sourcePart, messagePart = payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
-        if not messagePart or not originPart or not sourcePart then
-            return
-        end
+    if clubId ~= bridgeClubId or streamId ~= bridgeStreamId then
+        return
+    end
 
-        if guildPart == "" then
-            guildPart = nil
-        end
+    local messageInfo = C_Club.GetMessageInfo(clubId, streamId, messageId)
+    if not messageInfo or not messageInfo.content then
+        return
+    end
 
-        addBridgeMessage(originPart, guildPart, factionPart, messagePart)
-        mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
+    local text = messageInfo.content
+    if not text or text:sub(1, #bridgePayloadPrefix) ~= bridgePayloadPrefix then
+        return
+    end
+
+    local payload = text:sub(#bridgePayloadPrefix + 1)
+    local guildPart, factionPart, originPart, sourcePart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    if not messagePart or not originPart or not sourcePart then
+        return
+    end
+
+    if guildPart == "" then
+        guildPart = nil
+    end
+
+    addBridgeMessage(originPart, guildPart, factionPart, messagePart)
+    mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
+
+
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender = ...
         handleGuildChatMessage(text, sender)
