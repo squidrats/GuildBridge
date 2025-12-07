@@ -1,17 +1,21 @@
 local addonName = ...
 local bridgePayloadPrefix = "[GB]"
-local bridgeMarkerInGuild = "[Bridge]"
-local bridgeCommunityName = "GuildBridge"
-local bridgeStreamName = "Bridge"
-
-local bridgeClubId
-local bridgeStreamId
+local bridgeAddonPrefix = "GuildBridge"
 
 local mainFrame
 local scrollFrame
 local inputBox
 
 local eventFrame = CreateFrame("Frame")
+
+local partnerBattleTag
+local partnerGameAccountID
+local lastEchoedGuildText
+
+local guildShortNames = {
+    ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
+    ["MAKE DUROTAR GREAT AGAIN"] = "MDGA",
+}
 
 local function ensureSavedVariables()
     if not GuildBridgeDB then
@@ -20,58 +24,67 @@ local function ensureSavedVariables()
     if GuildBridgeDB.bridgeEnabled == nil then
         GuildBridgeDB.bridgeEnabled = false
     end
+    if GuildBridgeDB.partnerBattleTag == nil then
+        GuildBridgeDB.partnerBattleTag = ""
+    end
+    partnerBattleTag = GuildBridgeDB.partnerBattleTag
 end
 
-local function findBridgeClubAndStream()
-    local clubs = C_Club.GetSubscribedClubs()
-    if not clubs then
-        print("GuildBridge: no clubs returned by API.")
+local function findPartnerGameAccount()
+    partnerGameAccountID = nil
+    if not partnerBattleTag or partnerBattleTag == "" then
+        print("GuildBridge: no partner BattleTag configured. Use /gbridge partner Battletag#1234")
         return false
     end
 
-    bridgeClubId = nil
-    bridgeStreamId = nil
+    local numFriends = BNGetNumFriends()
+    if not numFriends or numFriends == 0 then
+        print("GuildBridge: no Battle.net friends found.")
+        return false
+    end
 
-    for _, club in ipairs(clubs) do
-        if club.name == bridgeCommunityName then
-            bridgeClubId = club.clubId
-            local streams = C_Club.GetStreams(bridgeClubId)
-            if not streams then
-                print("GuildBridge: found community but no streams.")
+    local wanted = string.lower(partnerBattleTag)
+
+    for i = 1, numFriends do
+        local accountInfo = C_BattleNet.GetFriendAccountInfo(i)
+        if accountInfo and accountInfo.battleTag then
+            local friendTag = string.lower(accountInfo.battleTag)
+            if friendTag == wanted then
+                local numGames = C_BattleNet.GetFriendNumGameAccounts(i)
+                if numGames and numGames > 0 then
+                    for j = 1, numGames do
+                        local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
+                        if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+                            partnerGameAccountID = gameInfo.gameAccountID
+                            print("GuildBridge: found partner relay:", gameInfo.characterName, "-" .. (gameInfo.realmName or ""), "id", gameInfo.gameAccountID)
+                            return true
+                        end
+                    end
+                end
+                print("GuildBridge: partner BattleTag found, but no WoW character online.")
                 return false
             end
-            for _, stream in ipairs(streams) do
-                if stream.name == bridgeStreamName then
-                    bridgeStreamId = stream.streamId
-                    print("GuildBridge: found community and stream:", bridgeClubId, bridgeStreamId)
-                    return true
-                end
-            end
-            print("GuildBridge: community found but stream '" .. bridgeStreamName .. "' not found.")
-            return false
         end
     end
 
-    print("GuildBridge: community '" .. bridgeCommunityName .. "' not found.")
+    print("GuildBridge: partner BattleTag " .. partnerBattleTag .. " not found in friends list.")
     return false
 end
-
 
 local function addBridgeMessage(senderName, guildName, factionTag, messageText)
     if not scrollFrame then
         return
     end
 
-    local factionString = factionTag and factionTag ~= "" and ("[" .. factionTag .. "] ") or ""
-    local guildTag = guildName and guildName ~= "" and ("<" .. guildName .. "> ") or ""
+    local short = guildShortNames[guildName] or guildName or ""
+    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
     local senderColored = "|cff00ff00" .. senderName .. "|r"
 
-    scrollFrame:AddMessage(factionString .. guildTag .. senderColored .. ": " .. messageText)
+    scrollFrame:AddMessage(guildTag .. senderColored .. ": " .. messageText)
 end
 
-local function sendCommunityPayload(originName, messageText, sourceType)
-    if not bridgeClubId or not bridgeStreamId then
-        print("GuildBridge: no club/stream ID, not sending.")
+local function sendBridgePayload(originName, messageText, sourceType)
+    if not partnerGameAccountID then
         return
     end
     if not messageText or messageText == "" then
@@ -93,23 +106,16 @@ local function sendCommunityPayload(originName, messageText, sourceType)
         .. "|"
         .. messageText
 
-    print("GuildBridge: calling C_Club.SendMessage", bridgeClubId, bridgeStreamId, payload)
-
-    local ok, err = pcall(C_Club.SendMessage, bridgeClubId, bridgeStreamId, payload)
+    local ok, err = pcall(BNSendGameData, partnerGameAccountID, bridgeAddonPrefix, payload)
     if not ok then
-        print("GuildBridge: C_Club.SendMessage error:", err)
-    else
-        print("GuildBridge: C_Club.SendMessage succeeded.")
+        print("GuildBridge: BNSendGameData error:", err)
     end
 end
 
-
-local function sendCommunityFromUI(messageText)
+local function sendFromUI(messageText)
     local originName = UnitName("player")
-    print("GuildBridge: sending from UI:", messageText, "club", bridgeClubId, "stream", bridgeStreamId)
-    sendCommunityPayload(originName, messageText, "U")
+    sendBridgePayload(originName, messageText, "U")
 end
-
 
 local function mirrorToGuild(senderName, guildName, factionTag, messageText, sourceType)
     if not GuildBridgeDB.bridgeEnabled then
@@ -128,10 +134,11 @@ local function mirrorToGuild(senderName, guildName, factionTag, messageText, sou
         return
     end
 
-    local factionString = factionTag and factionTag ~= "" and ("[" .. factionTag .. "] ") or ""
-    local guildTag = guildName and guildName ~= "" and ("<" .. guildName .. "> ") or ""
-    local line = bridgeMarkerInGuild .. " " .. factionString .. guildTag .. senderName .. ": " .. messageText
+    local short = guildShortNames[guildName] or guildName or ""
+    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
+    local line = guildTag .. senderName .. ": " .. messageText
 
+    lastEchoedGuildText = line
     SendChatMessage(line, "GUILD")
 end
 
@@ -142,18 +149,48 @@ local function handleGuildChatMessage(text, sender)
     if not IsInGuild() then
         return
     end
-    if not bridgeClubId or not bridgeStreamId then
+    if not partnerGameAccountID then
         return
     end
     if not text or text == "" then
         return
     end
-    if text:sub(1, #bridgeMarkerInGuild) == bridgeMarkerInGuild then
+
+    local originName = sender:match("([^%-]+)") or sender
+    local myName = UnitName("player")
+
+    if lastEchoedGuildText and text == lastEchoedGuildText and originName == myName then
+        lastEchoedGuildText = nil
         return
     end
 
-    local originName = sender:match("([^%-]+)") or sender
-    sendCommunityPayload(originName, text, "G")
+    sendBridgePayload(originName, text, "G")
+end
+
+local function handleBNAddonMessage(prefix, message)
+    if prefix ~= bridgeAddonPrefix then
+        return
+    end
+
+    local text = message
+    if not text or text:sub(1, #bridgePayloadPrefix) ~= bridgePayloadPrefix then
+        return
+    end
+
+    local payload = text:sub(#bridgePayloadPrefix + 1)
+    local guildPart, factionPart, originPart, sourcePart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    if not messagePart or not originPart or not sourcePart then
+        return
+    end
+
+    if guildPart == "" then
+        guildPart = nil
+    end
+
+    addBridgeMessage(originPart, guildPart, factionPart, messagePart)
+    mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
 end
 
 local function createBridgeUI()
@@ -199,7 +236,7 @@ local function createBridgeUI()
 
     inputBox:SetScript("OnEnterPressed", function(self)
         local text = self:GetText()
-        sendCommunityFromUI(text)
+        sendFromUI(text)
         self:SetText("")
     end)
 
@@ -221,56 +258,25 @@ end
 
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
-eventFrame:RegisterEvent("CLUB_MESSAGE_ADDED")
 eventFrame:RegisterEvent("CHAT_MSG_GUILD")
-
+eventFrame:RegisterEvent("BN_CHAT_MSG_ADDON")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
         local loadedAddon = ...
         if loadedAddon == addonName then
             ensureSavedVariables()
+            C_ChatInfo.RegisterAddonMessagePrefix(bridgeAddonPrefix)
             createBridgeUI()
         end
     elseif event == "PLAYER_LOGIN" then
-        findBridgeClubAndStream()
-  elseif event == "CLUB_MESSAGE_ADDED" then
-    local clubId, streamId, messageId = ...
-    print("GuildBridge: CLUB_MESSAGE_ADDED", clubId, streamId, messageId)
-
-    if clubId ~= bridgeClubId or streamId ~= bridgeStreamId then
-        return
-    end
-
-    local messageInfo = C_Club.GetMessageInfo(clubId, streamId, messageId)
-    if not messageInfo or not messageInfo.content then
-        return
-    end
-
-    local text = messageInfo.content
-    if not text or text:sub(1, #bridgePayloadPrefix) ~= bridgePayloadPrefix then
-        return
-    end
-
-    local payload = text:sub(#bridgePayloadPrefix + 1)
-    local guildPart, factionPart, originPart, sourcePart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
-
-    if not messagePart or not originPart or not sourcePart then
-        return
-    end
-
-    if guildPart == "" then
-        guildPart = nil
-    end
-
-    addBridgeMessage(originPart, guildPart, factionPart, messagePart)
-    mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
-
-
+        findPartnerGameAccount()
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender = ...
         handleGuildChatMessage(text, sender)
+    elseif event == "BN_CHAT_MSG_ADDON" then
+        local prefix, message = ...
+        handleBNAddonMessage(prefix, message)
     end
 end)
 
@@ -293,10 +299,22 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
         ensureSavedVariables()
         local status = GuildBridgeDB.bridgeEnabled and "enabled" or "disabled"
         print("GuildBridge: mirroring is " .. status .. " on this character.")
+    elseif msg:sub(1, 7) == "partner" then
+        local btag = msg:match("^partner%s+(.+)$")
+        ensureSavedVariables()
+        if btag and btag ~= "" then
+            GuildBridgeDB.partnerBattleTag = btag
+            partnerBattleTag = btag
+            print("GuildBridge: partner BattleTag set to " .. btag)
+            findPartnerGameAccount()
+        else
+            print("GuildBridge: usage: /gbridge partner Battletag#1234")
+        end
     elseif msg == "reload" then
-        findBridgeClubAndStream()
-        print("GuildBridge: community info refreshed.")
+        ensureSavedVariables()
+        findPartnerGameAccount()
+        print("GuildBridge: partner info refreshed.")
     else
-        print("GuildBridge: /gbridge, /gbridge show, /gbridge enable, /gbridge disable, /gbridge status, /gbridge reload")
+        print("GuildBridge: /gbridge, /gbridge show, /gbridge enable, /gbridge disable, /gbridge status, /gbridge partner Battletag#1234, /gbridge reload")
     end
 end
