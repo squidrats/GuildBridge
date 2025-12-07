@@ -12,6 +12,7 @@ local partnerBattleTag
 local partnerGameAccountID
 local lastEchoedGuildText
 local recentMessages = {}
+local recentMessagesLastCleanup = 0
 
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
@@ -70,6 +71,19 @@ local function findPartnerGameAccount()
 
     print("GuildBridge: partner BattleTag " .. partnerBattleTag .. " not found in friends list.")
     return false
+end
+
+local function cleanupRecentMessages()
+    local now = GetTime()
+    if now - recentMessagesLastCleanup < 30 then
+        return
+    end
+    recentMessagesLastCleanup = now
+    for key, t in pairs(recentMessages) do
+        if now - t > 10 then
+            recentMessages[key] = nil
+        end
+    end
 end
 
 local function addBridgeMessage(senderName, guildName, factionTag, messageText)
@@ -134,6 +148,8 @@ local function mirrorToGuild(senderName, guildName, factionTag, messageText, sou
     if sourceType == "G" and guildName == myGuildName then
         return
     end
+
+    cleanupRecentMessages()
 
     local short = guildShortNames[guildName] or guildName or ""
     local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
