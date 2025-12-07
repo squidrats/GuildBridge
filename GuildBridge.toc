@@ -1,0 +1,8 @@
+## Interface: 100207
+## Title: Guild Bridge
+## Notes: Cross-faction guild bridge via community
+## Author: You
+## Version: 1.0
+## SavedVariables: GuildBridgeDB
+
+GuildBridge.lua
