@@ -86,11 +86,23 @@ local function cleanupRecentMessages()
     end
 end
 
-local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
-    if not scrollFrame then
-        return
+-- Chat filter to hide the raw echoed bridge messages from guild chat
+-- (we display them properly formatted via addBridgeMessage instead)
+local function guildChatFilter(self, event, msg, sender, ...)
+    if lastEchoedGuildText and msg == lastEchoedGuildText then
+        local senderName = sender:match("([^%-]+)") or sender
+        local myName = UnitName("player")
+        if senderName == myName then
+            lastEchoedGuildText = nil -- clear it now that we've matched
+            return true -- suppress this message, we already displayed it formatted
+        end
     end
+    return false
+end
 
+ChatFrame_AddMessageEventFilter("CHAT_MSG_GUILD", guildChatFilter)
+
+local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
     local short = guildShortNames[guildName] or guildName or ""
     local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
 
@@ -101,7 +113,15 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     end
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. senderName .. "]|r|h"
 
-    scrollFrame:AddMessage(guildTag .. senderLink .. ": " .. messageText)
+    local formattedMessage = guildTag .. senderLink .. ": " .. messageText
+
+    -- Add to the bridge UI
+    if scrollFrame then
+        scrollFrame:AddMessage(formattedMessage)
+    end
+
+    -- Add to the default chat frame (guild chat color: green)
+    DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
 end
 
 local function sendBridgePayload(originName, originRealm, messageText, sourceType)
@@ -199,8 +219,7 @@ local function handleGuildChatMessage(text, sender)
     local myName = UnitName("player")
 
     if lastEchoedGuildText and text == lastEchoedGuildText and originName == myName then
-        lastEchoedGuildText = nil
-        return
+        return -- don't relay our own echoed message back
     end
 
     sendBridgePayload(originName, originRealm, text, "G")
