@@ -24,6 +24,9 @@ local MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 -- Track online friends
 local onlineFriends = {}
 
+-- Handshake tracking: gameAccountID -> { guildName, realmName, lastSeen }
+local connectedBridgeUsers = {}
+
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
     ["MAKE DUROTAR GREAT AGAIN"] = "MDGA",
@@ -111,6 +114,92 @@ end
 -- Forward declarations
 local updateConnectionIndicators
 local refreshMessages
+local recordGuildActivity
+local sendHandshake
+
+-- Send a handshake message to all online friends
+-- type: "HELLO" (announce), "PONG" (response to HELLO)
+local function sendHandshakeMessage(handshakeType, targetGameAccountID)
+    local myGuildName = GetGuildInfo("player")
+    if not myGuildName or not allowedGuilds[myGuildName] then
+        return
+    end
+
+    local myRealm = GetRealmName()
+    local payload = "[GBHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm
+
+    if targetGameAccountID then
+        -- Send to specific friend (PONG response)
+        pcall(BNSendGameData, targetGameAccountID, bridgeAddonPrefix, payload)
+    else
+        -- Broadcast to all online friends (HELLO)
+        local friends = findOnlineWoWFriends()
+        for _, friend in ipairs(friends) do
+            pcall(BNSendGameData, friend.gameAccountID, bridgeAddonPrefix, payload)
+        end
+    end
+end
+
+-- Handle incoming handshake messages
+local function handleHandshakeMessage(message, senderGameAccountID)
+    if not message or message:sub(1, 6) ~= "[GBHS]" then
+        return false
+    end
+
+    local data = message:sub(7)
+    local handshakeType, guildName, realmName = data:match("([^|]+)|([^|]+)|(.+)")
+
+    if not handshakeType or not guildName then
+        return true -- It was a handshake message, just malformed
+    end
+
+    -- Only track if it's an allowed guild
+    if not allowedGuilds[guildName] then
+        return true
+    end
+
+    -- Record this bridge user
+    connectedBridgeUsers[senderGameAccountID] = {
+        guildName = guildName,
+        realmName = realmName,
+        lastSeen = GetTime(),
+    }
+
+    -- Update indicators
+    if updateConnectionIndicators then
+        updateConnectionIndicators()
+    end
+
+    -- If they sent HELLO, respond with PONG
+    if handshakeType == "HELLO" then
+        sendHandshakeMessage("PONG", senderGameAccountID)
+    end
+
+    return true
+end
+
+-- Check if any connected bridge user is in a specific guild
+local function hasConnectedUserInGuild(filterKey)
+    local now = GetTime()
+    for gameAccountID, info in pairs(connectedBridgeUsers) do
+        -- Consider stale after 5 minutes
+        if now - info.lastSeen < 300 then
+            local userFilterKey = info.guildName
+            if info.realmName and info.realmName ~= "" then
+                userFilterKey = info.guildName .. "-" .. info.realmName
+            end
+            if userFilterKey == filterKey then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Send handshake to all friends (called on login and periodically)
+sendHandshake = function()
+    sendHandshakeMessage("HELLO")
+end
 
 -- Update list of online friends
 local function updateOnlineFriends()
@@ -145,22 +234,57 @@ refreshMessages = function()
     if not scrollFrame then return end
     scrollFrame:Clear()
 
-    -- If Status tab is selected, show online friends
+    -- If Status tab is selected, show connection pairs
     if currentFilter == "STATUS" then
-        scrollFrame:AddMessage("|cff88ffffOnline WoW Friends:|r")
+        scrollFrame:AddMessage("|cff88ffffBridge Connections:|r")
         scrollFrame:AddMessage("")
 
-        if #onlineFriends == 0 then
-            scrollFrame:AddMessage("|cffff8888No friends online.|r")
-        else
-            for _, friend in ipairs(onlineFriends) do
-                scrollFrame:AddMessage("  |cff00ff00" .. friend.characterName .. "-" .. (friend.realmName or "") .. "|r")
+        -- Get my info
+        local myName = UnitName("player")
+        local myRealm = GetRealmName()
+        local myGuildName = GetGuildInfo("player")
+        local myShort = guildShortNames[myGuildName] or myGuildName or "No Guild"
+
+        -- Collect connection pairs
+        local connections = {}
+        local now = GetTime()
+        for gameAccountID, info in pairs(connectedBridgeUsers) do
+            if now - info.lastSeen < 300 then
+                -- Find character name from onlineFriends
+                local charName = "Unknown"
+                local charRealm = info.realmName or ""
+                for _, friend in ipairs(onlineFriends) do
+                    if friend.gameAccountID == gameAccountID then
+                        charName = friend.characterName or "Unknown"
+                        charRealm = friend.realmName or info.realmName or ""
+                        break
+                    end
+                end
+                local theirShort = guildShortNames[info.guildName] or info.guildName or ""
+                table.insert(connections, {
+                    charName = charName,
+                    charRealm = charRealm,
+                    guildName = info.guildName,
+                    guildShort = theirShort,
+                    guildRealm = info.realmName or "",
+                })
             end
         end
 
-        scrollFrame:AddMessage("")
-        scrollFrame:AddMessage("|cff888888Messages sent to all online friends.|r")
-        scrollFrame:AddMessage("|cff888888Only those with addon in allowed guilds will relay.|r")
+        if #connections == 0 then
+            scrollFrame:AddMessage("|cffff8888No bridge connections active.|r")
+        else
+            for _, conn in ipairs(connections) do
+                local myRealmSuffix = myRealm and myRealm ~= "" and ("-" .. myRealm) or ""
+                local theirRealmSuffix = conn.guildRealm ~= "" and ("-" .. conn.guildRealm) or ""
+
+                -- Format: <MyGuild-Realm> MyChar  <-->  TheirChar <TheirGuild-Realm>
+                local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
+                local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
+
+                scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide)
+            end
+        end
         return
     end
 
@@ -190,6 +314,11 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     local filterKey = makeFilterKey(guildName, realmName)
 
     registerGuild(guildName, realmName)
+
+    -- Record activity for connection indicator
+    if recordGuildActivity then
+        recordGuildActivity(filterKey)
+    end
 
     table.insert(messageHistory, {
         guildName = guildName,
@@ -374,6 +503,11 @@ local function handleBNAddonMessage(prefix, message, senderID)
         return
     end
 
+    -- Check for handshake messages first
+    if handleHandshakeMessage(message, senderID) then
+        return
+    end
+
     local text = message
     if not text or text:sub(1, #bridgePayloadPrefix) ~= bridgePayloadPrefix then
         return
@@ -462,14 +596,33 @@ local function updateTabHighlights()
 end
 
 -- Update connection status indicators - just show if we have online friends
+-- Track last message time per guild filterKey
+local lastGuildActivity = {}
+
+recordGuildActivity = function(filterKey)
+    if filterKey then
+        lastGuildActivity[filterKey] = GetTime()
+        updateConnectionIndicators()
+    end
+end
+
+local function isGuildActive(filterKey)
+    if not filterKey then return false end
+    local lastTime = lastGuildActivity[filterKey]
+    if not lastTime then return false end
+    -- Consider active if we've seen activity in the last 5 minutes
+    return (GetTime() - lastTime) < 300
+end
+
 updateConnectionIndicators = function()
-    local hasOnlineFriends = #onlineFriends > 0
     for _, tab in pairs(tabButtons) do
         if tab.statusDot and tab.guildName then
-            if hasOnlineFriends then
-                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)  -- Green
+            if hasConnectedUserInGuild(tab.filterValue) then
+                -- Has a bridge user connected in this guild - green
+                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
             else
-                tab.statusDot:SetColorTexture(0.8, 0.3, 0.3, 1)  -- Red
+                -- No confirmed bridge user in this guild - red
+                tab.statusDot:SetColorTexture(0.8, 0.3, 0.3, 1)
             end
         end
     end
@@ -781,11 +934,41 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             ensureSavedVariables()
             C_ChatInfo.RegisterAddonMessagePrefix(bridgeAddonPrefix)
             createBridgeUI()
+
+            -- Periodic handshake every 2 minutes to keep connection status fresh
+            C_Timer.NewTicker(120, function()
+                sendHandshake()
+                -- Clean up stale entries
+                local now = GetTime()
+                for gameAccountID, info in pairs(connectedBridgeUsers) do
+                    if now - info.lastSeen > 300 then
+                        connectedBridgeUsers[gameAccountID] = nil
+                    end
+                end
+                updateConnectionIndicators()
+            end)
         end
     elseif event == "PLAYER_LOGIN" or event == "BN_CONNECTED" then
         updateOnlineFriends()
+        -- Send initial handshake after a short delay to ensure everything is loaded
+        C_Timer.After(3, sendHandshake)
     elseif event == "BN_FRIEND_INFO_CHANGED" then
         updateOnlineFriends()
+
+        -- Remove connectedBridgeUsers entries for friends who are no longer online
+        local onlineGameAccountIDs = {}
+        for _, friend in ipairs(onlineFriends) do
+            onlineGameAccountIDs[friend.gameAccountID] = true
+        end
+        for gameAccountID, _ in pairs(connectedBridgeUsers) do
+            if not onlineGameAccountIDs[gameAccountID] then
+                connectedBridgeUsers[gameAccountID] = nil
+            end
+        end
+        updateConnectionIndicators()
+
+        -- A friend came online or changed - send handshake to discover new bridge users
+        C_Timer.After(1, sendHandshake)
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender = ...
         handleGuildChatMessage(text, sender)
