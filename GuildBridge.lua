@@ -33,12 +33,20 @@ local connectedBridgeUsers = {}
 -- Create a character with this name in each guild on the guild's home server
 local ANCHOR_CHARACTER_NAME = "Guildbridge"
 
+-- TODO: Set to false once anchor characters are set up in all guilds
+local USE_FALLBACK_REALM = true
+
 -- Get the guild's home realm by finding the anchor character
 local function getGuildHomeRealm()
     if not IsInGuild() then return nil end
 
     local numMembers = GetNumGuildMembers()
-    if not numMembers or numMembers == 0 then return nil end
+    if not numMembers or numMembers == 0 then
+        if USE_FALLBACK_REALM then
+            return GetRealmName()
+        end
+        return nil
+    end
 
     -- Iterate through guild roster to find the anchor character
     for i = 1, numMembers do
@@ -57,7 +65,10 @@ local function getGuildHomeRealm()
         end
     end
 
-    -- Anchor character not found
+    -- Anchor character not found - use fallback if enabled
+    if USE_FALLBACK_REALM then
+        return GetRealmName()
+    end
     return nil
 end
 
