@@ -80,7 +80,7 @@ local guildShortNames = {
 
 -- Only relay messages from these guilds
 local allowedGuilds = {
-    ["MAKE ELWYNN GREAT AGAIN"] = true,
+    -- ["MAKE ELWYNN GREAT AGAIN"] = true,
     ["MAKE DUROTAR GREAT AGAIN"] = true,
     ["Bestiez"] = true,
 }
