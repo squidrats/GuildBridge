@@ -334,32 +334,52 @@ end
 local function updateTabHighlights()
     for _, tab in pairs(tabButtons) do
         if tab.filterValue == currentFilter then
-            tab:SetNormalFontObject(GameFontHighlight)
+            tab.guildText:SetFontObject(GameFontHighlight)
             tab.selected = true
         else
-            tab:SetNormalFontObject(GameFontNormal)
+            tab.guildText:SetFontObject(GameFontNormal)
             tab.selected = false
         end
     end
 end
 
-local function createTab(parent, label, filterValue, xOffset)
+local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset)
     local tab = CreateFrame("Button", nil, parent)
-    tab:SetSize(70, 20)
-    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -25)
-    tab:SetNormalFontObject(GameFontNormal)
-    tab:SetHighlightFontObject(GameFontHighlight)
-    tab:SetText(label)
+    tab:SetSize(70, 32)
+    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -22)
     tab.filterValue = filterValue
 
     local bg = tab:CreateTexture(nil, "BACKGROUND")
     bg:SetAllPoints()
     bg:SetColorTexture(0.2, 0.2, 0.2, 0.8)
 
+    -- Guild name (main label)
+    tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tab.guildText:SetPoint("TOP", tab, "TOP", 0, -4)
+    tab.guildText:SetText(guildLabel)
+
+    -- Realm name (smaller, below)
+    if realmLabel and realmLabel ~= "" then
+        tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -1)
+        tab.realmText:SetText(realmLabel)
+        tab.realmText:SetTextColor(0.6, 0.6, 0.6)
+    end
+
     tab:SetScript("OnClick", function()
         currentFilter = filterValue
         updateTabHighlights()
         refreshMessages()
+    end)
+
+    tab:SetScript("OnEnter", function(self)
+        self.guildText:SetFontObject(GameFontHighlight)
+    end)
+
+    tab:SetScript("OnLeave", function(self)
+        if not self.selected then
+            self.guildText:SetFontObject(GameFontNormal)
+        end
     end)
 
     return tab
@@ -377,20 +397,15 @@ local function rebuildTabs()
 
     -- Create "All" tab
     local xOffset = 10
-    tabButtons.all = createTab(mainFrame, "All", nil, xOffset)
-    xOffset = xOffset + 45
+    tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset)
+    xOffset = xOffset + 50
 
     -- Create tabs for each known guild
     local tabIndex = 1
     for filterKey, info in pairs(knownGuilds) do
         local short = guildShortNames[info.guildName] or info.guildName or "?"
-        local label = short
-        -- Add realm suffix for disambiguation (shortened)
-        if info.realmName then
-            local shortRealm = info.realmName:sub(1, 6)
-            label = short .. "-" .. shortRealm
-        end
-        tabButtons["guild" .. tabIndex] = createTab(mainFrame, label, filterKey, xOffset)
+        local realmLabel = info.realmName
+        tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset)
         xOffset = xOffset + 75
         tabIndex = tabIndex + 1
     end
@@ -444,7 +459,7 @@ local function createBridgeUI()
     end)
 
     scrollFrame = CreateFrame("ScrollingMessageFrame", nil, mainFrame)
-    scrollFrame:SetPoint("TOPLEFT", 10, -50)
+    scrollFrame:SetPoint("TOPLEFT", 10, -58)
     scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
     scrollFrame:SetFontObject(GameFontHighlightSmall)
     scrollFrame:SetJustifyH("LEFT")
