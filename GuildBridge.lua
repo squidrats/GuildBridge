@@ -196,8 +196,17 @@ local function hasConnectedUserInGuild(filterKey)
     return false
 end
 
+-- Throttle handshake sending
+local lastHandshakeTime = 0
+local HANDSHAKE_THROTTLE = 10  -- Minimum seconds between handshakes
+
 -- Send handshake to all friends (called on login and periodically)
 sendHandshake = function()
+    local now = GetTime()
+    if now - lastHandshakeTime < HANDSHAKE_THROTTLE then
+        return  -- Throttled
+    end
+    lastHandshakeTime = now
     sendHandshakeMessage("HELLO")
 end
 
@@ -953,22 +962,32 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Send initial handshake after a short delay to ensure everything is loaded
         C_Timer.After(3, sendHandshake)
     elseif event == "BN_FRIEND_INFO_CHANGED" then
+        local previousFriendIDs = {}
+        for _, friend in ipairs(onlineFriends) do
+            previousFriendIDs[friend.gameAccountID] = true
+        end
+
         updateOnlineFriends()
 
         -- Remove connectedBridgeUsers entries for friends who are no longer online
-        local onlineGameAccountIDs = {}
+        local currentFriendIDs = {}
         for _, friend in ipairs(onlineFriends) do
-            onlineGameAccountIDs[friend.gameAccountID] = true
+            currentFriendIDs[friend.gameAccountID] = true
         end
         for gameAccountID, _ in pairs(connectedBridgeUsers) do
-            if not onlineGameAccountIDs[gameAccountID] then
+            if not currentFriendIDs[gameAccountID] then
                 connectedBridgeUsers[gameAccountID] = nil
             end
         end
         updateConnectionIndicators()
 
-        -- A friend came online or changed - send handshake to discover new bridge users
-        C_Timer.After(1, sendHandshake)
+        -- Only send handshake if there's a NEW friend we haven't seen
+        for gameAccountID, _ in pairs(currentFriendIDs) do
+            if not previousFriendIDs[gameAccountID] and not connectedBridgeUsers[gameAccountID] then
+                -- New friend came online, send handshake to just them
+                sendHandshakeMessage("HELLO", gameAccountID)
+            end
+        end
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender = ...
         handleGuildChatMessage(text, sender)
