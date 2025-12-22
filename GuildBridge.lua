@@ -86,19 +86,25 @@ local function cleanupRecentMessages()
     end
 end
 
-local function addBridgeMessage(senderName, guildName, factionTag, messageText)
+local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
     if not scrollFrame then
         return
     end
 
     local short = guildShortNames[guildName] or guildName or ""
     local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
-    local senderColored = "|cff00ff00" .. senderName .. "|r"
 
-    scrollFrame:AddMessage(guildTag .. senderColored .. ": " .. messageText)
+    -- Create a clickable player link for inviting
+    local fullName = senderName
+    if realmName and realmName ~= "" then
+        fullName = senderName .. "-" .. realmName
+    end
+    local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. senderName .. "]|r|h"
+
+    scrollFrame:AddMessage(guildTag .. senderLink .. ": " .. messageText)
 end
 
-local function sendBridgePayload(originName, messageText, sourceType)
+local function sendBridgePayload(originName, originRealm, messageText, sourceType)
     if not partnerGameAccountID then
         return
     end
@@ -117,6 +123,8 @@ local function sendBridgePayload(originName, messageText, sourceType)
         .. "|"
         .. originName
         .. "|"
+        .. (originRealm or "")
+        .. "|"
         .. sourceType
         .. "|"
         .. messageText
@@ -128,8 +136,11 @@ local function sendBridgePayload(originName, messageText, sourceType)
 end
 
 local function sendFromUI(messageText)
-    local originName = UnitName("player")
-    sendBridgePayload(originName, messageText, "U")
+    local originName, originRealm = UnitName("player")
+    if not originRealm or originRealm == "" then
+        originRealm = GetRealmName()
+    end
+    sendBridgePayload(originName, originRealm, messageText, "U")
 end
 
 local function mirrorToGuild(senderName, guildName, factionTag, messageText, sourceType)
@@ -180,7 +191,11 @@ local function handleGuildChatMessage(text, sender)
         return
     end
 
-    local originName = sender:match("([^%-]+)") or sender
+    local originName, originRealm = sender:match("([^%-]+)%-?(.*)")
+    originName = originName or sender
+    if not originRealm or originRealm == "" then
+        originRealm = GetRealmName()
+    end
     local myName = UnitName("player")
 
     if lastEchoedGuildText and text == lastEchoedGuildText and originName == myName then
@@ -188,7 +203,7 @@ local function handleGuildChatMessage(text, sender)
         return
     end
 
-    sendBridgePayload(originName, text, "G")
+    sendBridgePayload(originName, originRealm, text, "G")
 end
 
 local function handleBNAddonMessage(prefix, message)
@@ -202,8 +217,8 @@ local function handleBNAddonMessage(prefix, message)
     end
 
     local payload = text:sub(#bridgePayloadPrefix + 1)
-    local guildPart, factionPart, originPart, sourcePart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+    local guildPart, factionPart, originPart, realmPart, sourcePart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
 
     if not messagePart or not originPart or not sourcePart then
         return
@@ -212,8 +227,11 @@ local function handleBNAddonMessage(prefix, message)
     if guildPart == "" then
         guildPart = nil
     end
+    if realmPart == "" then
+        realmPart = nil
+    end
 
-    addBridgeMessage(originPart, guildPart, factionPart, messagePart)
+    addBridgeMessage(originPart, guildPart, factionPart, messagePart, realmPart)
     mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
 end
 
@@ -243,12 +261,16 @@ local function createBridgeUI()
     scrollFrame:SetFading(false)
     scrollFrame:SetMaxLines(500)
     scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetHyperlinksEnabled(true)
     scrollFrame:SetScript("OnMouseWheel", function(self, delta)
         if delta > 0 then
             self:ScrollUp()
         elseif delta < 0 then
             self:ScrollDown()
         end
+    end)
+    scrollFrame:SetScript("OnHyperlinkClick", function(self, link, text, button)
+        SetItemRef(link, text, button)
     end)
 
     inputBox = CreateFrame("EditBox", nil, mainFrame, "InputBoxTemplate")
