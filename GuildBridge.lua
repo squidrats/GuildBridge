@@ -156,10 +156,24 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
 end
 
 local function sendFromUI(messageText)
+    if not messageText or messageText == "" then
+        return
+    end
     local originName, originRealm = UnitName("player")
     if not originRealm or originRealm == "" then
         originRealm = GetRealmName()
     end
+    local playerGuildName = GetGuildInfo("player")
+
+    -- Show in bridge window only (not default chat) for messages we send from the UI
+    local short = guildShortNames[playerGuildName] or playerGuildName or ""
+    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
+    local fullName = originName .. "-" .. originRealm
+    local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. originName .. "]|r|h"
+    if scrollFrame then
+        scrollFrame:AddMessage(guildTag .. senderLink .. ": " .. messageText)
+    end
+
     sendBridgePayload(originName, originRealm, messageText, "U")
 end
 
@@ -308,6 +322,8 @@ local function createBridgeUI()
     inputBox:SetScript("OnEscapePressed", function(self)
         self:ClearFocus()
     end)
+
+    mainFrame:Hide() -- start hidden, show with /gb
 end
 
 local function toggleBridgeFrame()
@@ -346,6 +362,7 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
 end)
 
 SLASH_GUILDBRIDGE1 = "/gbridge"
+SLASH_GUILDBRIDGE2 = "/gb"
 SlashCmdList["GUILDBRIDGE"] = function(msg)
     msg = msg or ""
     msg = msg:lower()
