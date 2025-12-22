@@ -12,6 +12,8 @@ local eventFrame = CreateFrame("Frame")
 
 -- Current filter: nil = All, or guild-realm key
 local currentFilter = nil
+-- Current page: "chat" or "status"
+local currentPage = "chat"
 -- Store messages for filtering
 local messageHistory = {}
 -- Track unique guild+realm combinations we've seen
@@ -49,6 +51,9 @@ local function ensureSavedVariables()
     end
     if GuildBridgeDB.muteSend == nil then
         GuildBridgeDB.muteSend = false
+    end
+    if GuildBridgeDB.filterNativeChat == nil then
+        GuildBridgeDB.filterNativeChat = false
     end
     if GuildBridgeDB.knownGuilds == nil then
         GuildBridgeDB.knownGuilds = {}
@@ -219,8 +224,8 @@ local function updateOnlineFriends()
         updateConnectionIndicators()
     end
 
-    -- Refresh status tab if it's currently displayed
-    if currentFilter == "STATUS" then
+    -- Refresh status page if it's currently displayed
+    if currentPage == "status" then
         refreshMessages()
     end
 end
@@ -243,8 +248,8 @@ refreshMessages = function()
     if not scrollFrame then return end
     scrollFrame:Clear()
 
-    -- If Status tab is selected, show connection pairs
-    if currentFilter == "STATUS" then
+    -- If Status page is selected, show connection pairs
+    if currentPage == "status" then
         scrollFrame:AddMessage("|cff88ffffBridge Connections:|r")
         scrollFrame:AddMessage("")
 
@@ -339,11 +344,14 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
         table.remove(messageHistory, 1)
     end
 
-    if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
+    if scrollFrame and currentPage == "chat" and (currentFilter == nil or filterKey == currentFilter) then
         scrollFrame:AddMessage(formattedMessage)
     end
 
-    DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
+    -- Only show in native chat if filter is off, or if message matches the current filter
+    if not GuildBridgeDB.filterNativeChat or currentFilter == nil or filterKey == currentFilter then
+        DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
+    end
 end
 
 local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm)
@@ -731,10 +739,11 @@ local function showContextMenu(filterKey, guildLabel)
     contextMenu:Show()
 end
 
-local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, guildName)
+local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, yOffset, guildName, tabWidth)
+    tabWidth = tabWidth or 72
     local tab = CreateFrame("Frame", nil, parent)
-    tab:SetSize(72, 34)
-    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -20)
+    tab:SetSize(tabWidth, 34)
+    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, yOffset)
     tab:SetFrameLevel(parent:GetFrameLevel() + 10)
     tab:EnableMouse(true)
     tab.filterValue = filterValue
@@ -773,7 +782,7 @@ local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, g
     end
 
     tab:SetScript("OnMouseDown", function(self, button)
-        if button == "RightButton" and filterValue then
+        if button == "RightButton" and filterValue and filterValue ~= "STATUS" then
             showContextMenu(filterValue, guildLabel)
         elseif button == "LeftButton" then
             currentFilter = filterValue
@@ -801,6 +810,141 @@ local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, g
     return tab
 end
 
+local pageTabs = {}
+local updatePageVisibility  -- Forward declaration
+
+-- Create a styled page tab
+local function createPageTab(parent, label, tabIndex, pageName)
+    local tab = CreateFrame("Button", "GuildBridgePageTab" .. tabIndex, parent)
+    tab:SetSize(60, 24)
+    tab:SetID(tabIndex)
+    tab.pageName = pageName
+
+    -- Background
+    tab.bg = tab:CreateTexture(nil, "BACKGROUND")
+    tab.bg:SetAllPoints()
+    tab.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
+
+    -- Border
+    tab.border = tab:CreateTexture(nil, "BORDER")
+    tab.border:SetPoint("TOPLEFT", -1, 1)
+    tab.border:SetPoint("BOTTOMRIGHT", 1, -1)
+    tab.border:SetColorTexture(0.4, 0.4, 0.4, 1)
+
+    -- Text
+    tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tab.text:SetPoint("CENTER")
+    tab.text:SetText(label)
+
+    tab:SetScript("OnClick", function(self)
+        PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
+        currentPage = self.pageName
+        updatePageVisibility()
+    end)
+
+    tab:SetScript("OnEnter", function(self)
+        if currentPage ~= self.pageName then
+            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1)
+            self.text:SetTextColor(1, 1, 1)
+        end
+    end)
+
+    tab:SetScript("OnLeave", function(self)
+        if currentPage ~= self.pageName then
+            self.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
+            self.text:SetTextColor(0.8, 0.8, 0.8)
+        end
+    end)
+
+    return tab
+end
+
+local function updatePageTabSelection()
+    for i, tab in ipairs(pageTabs) do
+        if tab.pageName == currentPage then
+            -- Selected tab
+            tab.bg:SetColorTexture(0.2, 0.2, 0.3, 1)
+            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1)
+            tab.text:SetTextColor(1, 0.82, 0)
+        else
+            -- Unselected tab
+            tab.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
+            tab.border:SetColorTexture(0.4, 0.4, 0.4, 1)
+            tab.text:SetTextColor(0.8, 0.8, 0.8)
+        end
+    end
+end
+
+local function createPageTabs()
+    if not mainFrame then return end
+
+    -- Clear existing page tabs
+    for _, tab in pairs(pageTabs) do
+        tab:Hide()
+        tab:SetParent(nil)
+    end
+    pageTabs = {}
+
+    -- Create Chat tab at top left (below title bar)
+    pageTabs[1] = createPageTab(mainFrame, "Chat", 1, "chat")
+    pageTabs[1]:SetPoint("TOPLEFT", mainFrame, "TOPLEFT", 10, -24)
+
+    -- Create Status tab next to Chat
+    pageTabs[2] = createPageTab(mainFrame, "Status", 2, "status")
+    pageTabs[2]:SetPoint("LEFT", pageTabs[1], "RIGHT", 4, 0)
+
+    updatePageTabSelection()
+end
+
+updatePageVisibility = function()
+    if not mainFrame then return end
+
+    -- Hide/show guild filter tabs based on current page
+    for key, tab in pairs(tabButtons) do
+        if key:match("^guild") or key == "all" then
+            if currentPage == "chat" then
+                tab:Show()
+            else
+                tab:Hide()
+            end
+        end
+    end
+
+    -- Update page tab selection (native WoW style)
+    updatePageTabSelection()
+
+    -- Adjust scroll frame position
+    if scrollFrame then
+        local pageTabHeight = 28  -- Height of page tabs + spacing
+        if currentPage == "chat" then
+            -- Calculate guild tab rows
+            local tabWidth = 72
+            local tabSpacing = 4
+            local rowHeight = 38
+            local maxWidth = mainFrame:GetWidth() - 16
+            local guildCount = 1  -- Start with 1 for "All" tab
+            local myGuildName = GetGuildInfo("player")
+            for filterKey, info in pairs(knownGuilds) do
+                if info.guildName ~= myGuildName then
+                    guildCount = guildCount + 1
+                end
+            end
+            local tabsPerRow = math.floor(maxWidth / (tabWidth + tabSpacing))
+            local numRows = math.ceil(guildCount / tabsPerRow)
+            if numRows < 1 then numRows = 1 end
+            -- Page tabs + guild filter rows
+            local scrollTopOffset = 24 + pageTabHeight + (numRows * rowHeight)
+            scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+        else
+            -- Status page - just page tabs, no guild filter tabs
+            local scrollTopOffset = 24 + pageTabHeight
+            scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+        end
+    end
+
+    refreshMessages()
+end
+
 rebuildTabs = function()
     if not mainFrame then return end
 
@@ -810,26 +954,40 @@ rebuildTabs = function()
     end
     tabButtons = {}
 
-    local xOffset = 8
     local tabSpacing = 4
-    tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset, nil)
-    xOffset = xOffset + 72 + tabSpacing
+    local tabWidth = 72
+    local rowHeight = 38
+    local pageTabHeight = 28
+    local topRowY = -(24 + pageTabHeight)  -- Below title bar and page tabs
 
+    -- Guild filter tabs (only visible on chat page)
     local myGuildName = GetGuildInfo("player")
+    local xOffset = 8
+    local yOffset = topRowY
+    local maxWidth = mainFrame:GetWidth() - 16
     local tabIndex = 1
+
+    -- "All" tab for chat page
+    tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset, yOffset, nil, tabWidth)
+    xOffset = xOffset + tabWidth + tabSpacing
+
     for filterKey, info in pairs(knownGuilds) do
         if info.guildName ~= myGuildName then
+            -- Check if we need to wrap to next row
+            if xOffset + tabWidth > maxWidth then
+                xOffset = 8
+                yOffset = yOffset - rowHeight
+            end
+
             local short = guildShortNames[info.guildName] or info.guildName or "?"
             local realmLabel = info.realmName
-            tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset, info.guildName)
-            xOffset = xOffset + 72 + tabSpacing
+            tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset, yOffset, info.guildName, tabWidth)
+            xOffset = xOffset + tabWidth + tabSpacing
             tabIndex = tabIndex + 1
         end
     end
 
-    tabButtons.status = createTab(mainFrame, "Status", nil, "STATUS", xOffset, nil)
-    tabButtons.status.isStatusTab = true
-
+    updatePageVisibility()
     updateTabHighlights()
     updateConnectionIndicators()
 end
@@ -865,6 +1023,9 @@ local function createBridgeUI()
     mainFrame.title:SetPoint("LEFT", mainFrame.TitleBg, "LEFT", 5, 0)
     mainFrame.title:SetText("Guild Bridge")
 
+    -- Create native WoW-style page tabs at the bottom
+    createPageTabs()
+
     rebuildTabs()
 
     muteCheckbox = CreateFrame("CheckButton", nil, mainFrame, "UICheckButtonTemplate")
@@ -878,8 +1039,19 @@ local function createBridgeUI()
         GuildBridgeDB.muteSend = self:GetChecked()
     end)
 
+    local filterChatCheckbox = CreateFrame("CheckButton", nil, mainFrame, "UICheckButtonTemplate")
+    filterChatCheckbox:SetSize(24, 24)
+    filterChatCheckbox:SetPoint("RIGHT", muteCheckbox.text, "LEFT", -10, 0)
+    filterChatCheckbox.text = filterChatCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    filterChatCheckbox.text:SetPoint("RIGHT", filterChatCheckbox, "LEFT", -2, 0)
+    filterChatCheckbox.text:SetText("Filter Chat")
+    filterChatCheckbox:SetChecked(GuildBridgeDB.filterNativeChat or false)
+    filterChatCheckbox:SetScript("OnClick", function(self)
+        GuildBridgeDB.filterNativeChat = self:GetChecked()
+    end)
+
     scrollFrame = CreateFrame("ScrollingMessageFrame", nil, mainFrame)
-    scrollFrame:SetPoint("TOPLEFT", 10, -60)
+    scrollFrame:SetPoint("TOPLEFT", 10, -90)  -- Default: page tabs (28) + 1 row of guild filter tabs (38) + title bar (24)
     scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
     scrollFrame:SetFontObject(GameFontHighlightSmall)
     scrollFrame:SetJustifyH("LEFT")
