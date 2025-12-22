@@ -17,8 +17,12 @@ local messageHistory = {}
 -- Track unique guild+realm combinations we've seen
 local knownGuilds = {}
 
-local partnerBattleTag
-local partnerGameAccountID
+-- Message deduplication
+local recentMessages = {}  -- Hash -> timestamp
+local MESSAGE_DEDUPE_WINDOW = 10  -- seconds
+
+-- Track online friends
+local onlineFriends = {}
 
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
@@ -38,10 +42,7 @@ local function ensureSavedVariables()
         GuildBridgeDB = {}
     end
     if GuildBridgeDB.bridgeEnabled == nil then
-        GuildBridgeDB.bridgeEnabled = false
-    end
-    if GuildBridgeDB.partnerBattleTag == nil then
-        GuildBridgeDB.partnerBattleTag = ""
+        GuildBridgeDB.bridgeEnabled = true
     end
     if GuildBridgeDB.muteSend == nil then
         GuildBridgeDB.muteSend = false
@@ -49,50 +50,81 @@ local function ensureSavedVariables()
     if GuildBridgeDB.knownGuilds == nil then
         GuildBridgeDB.knownGuilds = {}
     end
-    partnerBattleTag = GuildBridgeDB.partnerBattleTag
-    -- Restore known guilds from saved variables
     knownGuilds = GuildBridgeDB.knownGuilds
 end
 
-local function findPartnerGameAccount()
-    partnerGameAccountID = nil
-    if not partnerBattleTag or partnerBattleTag == "" then
-        print("GuildBridge: no partner BattleTag configured. Use /gbridge partner Battletag#1234")
-        return false
+-- Generate a hash for message deduplication
+local function makeMessageHash(guildName, originName, originRealm, messageText)
+    return guildName .. "|" .. originName .. "|" .. originRealm .. "|" .. messageText
+end
+
+-- Check if message is a duplicate (seen recently)
+local function isDuplicateMessage(hash)
+    local now = GetTime()
+    -- Clean old entries
+    for h, timestamp in pairs(recentMessages) do
+        if now - timestamp > MESSAGE_DEDUPE_WINDOW then
+            recentMessages[h] = nil
+        end
     end
+    -- Check if this hash exists
+    if recentMessages[hash] then
+        return true
+    end
+    -- Record this message
+    recentMessages[hash] = now
+    return false
+end
+
+-- Find all online WoW friends
+local function findOnlineWoWFriends()
+    local friends = {}
 
     local numFriends = BNGetNumFriends()
     if not numFriends or numFriends == 0 then
-        print("GuildBridge: no Battle.net friends found.")
-        return false
+        return friends
     end
-
-    local wanted = string.lower(partnerBattleTag)
 
     for i = 1, numFriends do
         local accountInfo = C_BattleNet.GetFriendAccountInfo(i)
-        if accountInfo and accountInfo.battleTag then
-            local friendTag = string.lower(accountInfo.battleTag)
-            if friendTag == wanted then
-                local numGames = C_BattleNet.GetFriendNumGameAccounts(i)
-                if numGames and numGames > 0 then
-                    for j = 1, numGames do
-                        local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
-                        if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
-                            partnerGameAccountID = gameInfo.gameAccountID
-                            print("GuildBridge: found partner relay:", gameInfo.characterName, "-" .. (gameInfo.realmName or ""), "id", gameInfo.gameAccountID)
-                            return true
-                        end
+        if accountInfo then
+            local numGames = C_BattleNet.GetFriendNumGameAccounts(i)
+            if numGames and numGames > 0 then
+                for j = 1, numGames do
+                    local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
+                    if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+                        table.insert(friends, {
+                            gameAccountID = gameInfo.gameAccountID,
+                            characterName = gameInfo.characterName,
+                            realmName = gameInfo.realmName,
+                            battleTag = accountInfo.battleTag,
+                        })
                     end
                 end
-                print("GuildBridge: partner BattleTag found, but no WoW character online.")
-                return false
             end
         end
     end
 
-    print("GuildBridge: partner BattleTag " .. partnerBattleTag .. " not found in friends list.")
-    return false
+    return friends
+end
+
+-- Forward declarations
+local updateConnectionIndicators
+local refreshMessages
+
+-- Update list of online friends
+local function updateOnlineFriends()
+    onlineFriends = findOnlineWoWFriends()
+
+    -- Update connection indicators on tabs
+    if updateConnectionIndicators then
+        updateConnectionIndicators()
+    end
+
+    -- Refresh status tab if it's currently displayed
+    if currentFilter == "STATUS" then
+        refreshMessages()
+    end
 end
 
 
@@ -109,9 +141,30 @@ end
 local registerGuild
 local rebuildTabs
 
-local function refreshMessages()
+refreshMessages = function()
     if not scrollFrame then return end
     scrollFrame:Clear()
+
+    -- If Status tab is selected, show online friends
+    if currentFilter == "STATUS" then
+        scrollFrame:AddMessage("|cff88ffffOnline WoW Friends:|r")
+        scrollFrame:AddMessage("")
+
+        if #onlineFriends == 0 then
+            scrollFrame:AddMessage("|cffff8888No friends online.|r")
+        else
+            for _, friend in ipairs(onlineFriends) do
+                scrollFrame:AddMessage("  |cff00ff00" .. friend.characterName .. "-" .. (friend.realmName or "") .. "|r")
+            end
+        end
+
+        scrollFrame:AddMessage("")
+        scrollFrame:AddMessage("|cff888888Messages sent to all online friends.|r")
+        scrollFrame:AddMessage("|cff888888Only those with addon in allowed guilds will relay.|r")
+        return
+    end
+
+    -- Normal message display
     for _, msg in ipairs(messageHistory) do
         if currentFilter == nil or msg.filterKey == currentFilter then
             scrollFrame:AddMessage(msg.formatted)
@@ -121,14 +174,12 @@ end
 
 local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
     local short = guildShortNames[guildName] or guildName or ""
-    -- Include realm in the tag to distinguish same-name guilds
     local realmSuffix = ""
     if realmName and realmName ~= "" then
         realmSuffix = "-" .. realmName
     end
     local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
-    -- Create a clickable player link for inviting
     local fullName = senderName
     if realmName and realmName ~= "" then
         fullName = senderName .. "-" .. realmName
@@ -138,48 +189,54 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     local formattedMessage = guildTag .. senderLink .. ": " .. messageText
     local filterKey = makeFilterKey(guildName, realmName)
 
-    -- Register this guild for tab creation
     registerGuild(guildName, realmName)
 
-    -- Store message for filtering
     table.insert(messageHistory, {
         guildName = guildName,
         realmName = realmName,
         filterKey = filterKey,
         formatted = formattedMessage,
     })
-    -- Keep history limited
     if #messageHistory > 500 then
         table.remove(messageHistory, 1)
     end
 
-    -- Add to the bridge UI if it matches current filter
     if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
         scrollFrame:AddMessage(formattedMessage)
     end
 
-    -- Add to the default chat frame (guild chat color: green)
     DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
 end
 
-local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter)
-    if not partnerGameAccountID then
-        return
-    end
+local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm)
     if not messageText or messageText == "" then
         return
     end
+
+    -- Get current online friends
+    if #onlineFriends == 0 then
+        onlineFriends = findOnlineWoWFriends()
+    end
+
+    if #onlineFriends == 0 then
+        return
+    end
+
     sourceType = sourceType or "U"
 
-    local playerGuildName = GetGuildInfo("player")
-    local playerRealm = GetRealmName()
+    local guildName = overrideGuild or GetGuildInfo("player")
+    local guildRealm = overrideGuildRealm or GetRealmName()
     local factionGroup = select(1, UnitFactionGroup("player")) or "Unknown"
 
-    -- Payload format: guild|guildRealm|faction|originName|originRealm|sourceType|targetFilter|message
+    -- Generate message ID for deduplication if not provided
+    if not messageId or messageId == "" then
+        messageId = guildRealm .. "-" .. originName .. "-" .. GetTime()
+    end
+
     local payload = bridgePayloadPrefix
-        .. (playerGuildName or "")
+        .. (guildName or "")
         .. "|"
-        .. (playerRealm or "")
+        .. (guildRealm or "")
         .. "|"
         .. factionGroup
         .. "|"
@@ -191,11 +248,16 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
         .. "|"
         .. (targetFilter or "")
         .. "|"
+        .. messageId
+        .. "|"
         .. messageText
 
-    local ok, err = pcall(BNSendGameData, partnerGameAccountID, bridgeAddonPrefix, payload)
-    if not ok then
-        print("GuildBridge: BNSendGameData error:", err)
+    -- Send to all online WoW friends
+    for _, friend in ipairs(onlineFriends) do
+        local ok, err = pcall(BNSendGameData, friend.gameAccountID, bridgeAddonPrefix, payload)
+        if not ok then
+            print("GuildBridge: error sending to", friend.characterName or "unknown", ":", err)
+        end
     end
 end
 
@@ -204,8 +266,6 @@ local function sendFromUI(messageText)
         return
     end
 
-    -- If a filter is selected, only send to that guild+realm
-    -- If no filter (All), send to all
     local targetFilter = currentFilter
 
     local originName, originRealm = UnitName("player")
@@ -214,7 +274,6 @@ local function sendFromUI(messageText)
     end
     local playerGuildName = GetGuildInfo("player")
 
-    -- Show in bridge window only (not default chat) for messages we send from the UI
     local short = guildShortNames[playerGuildName] or playerGuildName or ""
     local realmSuffix = ""
     if originRealm and originRealm ~= "" then
@@ -226,7 +285,6 @@ local function sendFromUI(messageText)
     local formattedMessage = guildTag .. senderLink .. ": " .. messageText
     local filterKey = makeFilterKey(playerGuildName, originRealm)
 
-    -- Store message for filtering
     table.insert(messageHistory, {
         guildName = playerGuildName,
         realmName = originRealm,
@@ -241,6 +299,10 @@ local function sendFromUI(messageText)
         scrollFrame:AddMessage(formattedMessage)
     end
 
+    -- Record hash so we don't display it again when it comes back
+    local hash = makeMessageHash(playerGuildName or "", originName, originRealm, messageText)
+    isDuplicateMessage(hash)  -- This records the hash
+
     sendBridgePayload(originName, originRealm, messageText, "U", targetFilter)
 end
 
@@ -253,7 +315,6 @@ local function handleGuildChatMessage(text, sender)
         return
     end
 
-    -- Only process from allowed guilds
     local myGuildName = GetGuildInfo("player")
     if not myGuildName or not allowedGuilds[myGuildName] then
         return
@@ -265,7 +326,6 @@ local function handleGuildChatMessage(text, sender)
         originRealm = GetRealmName()
     end
 
-    -- Always show in bridge window (but not default chat - it's already there from guild)
     local short = guildShortNames[myGuildName] or myGuildName or ""
     local realmSuffix = "-" .. originRealm
     local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
@@ -274,7 +334,6 @@ local function handleGuildChatMessage(text, sender)
     local formattedMessage = guildTag .. senderLink .. ": " .. text
     local filterKey = makeFilterKey(myGuildName, originRealm)
 
-    -- Register guild and store message
     registerGuild(myGuildName, originRealm)
     table.insert(messageHistory, {
         guildName = myGuildName,
@@ -286,20 +345,14 @@ local function handleGuildChatMessage(text, sender)
         table.remove(messageHistory, 1)
     end
 
-    -- Show in bridge window if filter matches
     if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
         scrollFrame:AddMessage(formattedMessage)
     end
 
-    -- Only relay to partner if bridge is enabled
     if not GuildBridgeDB.bridgeEnabled then
         return
     end
-    if not partnerGameAccountID then
-        return
-    end
 
-    -- If mute is enabled, only skip relaying our own messages
     if GuildBridgeDB.muteSend then
         local myName = UnitName("player")
         if originName == myName then
@@ -307,10 +360,16 @@ local function handleGuildChatMessage(text, sender)
         end
     end
 
+    -- Check for duplicate before relaying
+    local hash = makeMessageHash(myGuildName, originName, originRealm, text)
+    if isDuplicateMessage(hash) then
+        return
+    end
+
     sendBridgePayload(originName, originRealm, text, "G")
 end
 
-local function handleBNAddonMessage(prefix, message)
+local function handleBNAddonMessage(prefix, message, senderID)
     if prefix ~= bridgeAddonPrefix then
         return
     end
@@ -321,40 +380,44 @@ local function handleBNAddonMessage(prefix, message)
     end
 
     local payload = text:sub(#bridgePayloadPrefix + 1)
-    -- New format: guild|guildRealm|faction|originName|originRealm|sourceType|targetFilter|message
-    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
 
-    -- Fallback for old format
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        messageIdPart = nil
+    end
+
     if not messagePart then
         guildPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
             payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
-        guildRealmPart = originRealmPart -- best guess for old format
+        guildRealmPart = originRealmPart
+        messageIdPart = nil
     end
 
     if not messagePart or not originPart or not sourcePart then
         return
     end
 
-    if guildPart == "" then
-        guildPart = nil
-    end
-    if guildRealmPart == "" then
-        guildRealmPart = nil
-    end
-    if originRealmPart == "" then
-        originRealmPart = nil
-    end
-    if targetPart == "" then
-        targetPart = nil
-    end
+    if guildPart == "" then guildPart = nil end
+    if guildRealmPart == "" then guildRealmPart = nil end
+    if originRealmPart == "" then originRealmPart = nil end
+    if targetPart == "" then targetPart = nil end
+    if messageIdPart == "" then messageIdPart = nil end
 
     -- Only accept messages from allowed guilds
     if guildPart and not allowedGuilds[guildPart] then
         return
     end
 
-    -- If message has a target filter (guild-realm), only process if we match
+    -- Check for duplicate message using hash
+    local hash = makeMessageHash(guildPart or "", originPart, originRealmPart or "", messagePart)
+    if isDuplicateMessage(hash) then
+        return
+    end
+
+    -- If message has a target filter, only process if we match
     if targetPart and targetPart ~= "" then
         local myGuildName = GetGuildInfo("player")
         local myRealm = GetRealmName()
@@ -364,24 +427,30 @@ local function handleBNAddonMessage(prefix, message)
         end
     end
 
-    -- Use guild realm for the message display (to distinguish same-name guilds)
+    -- Display the message
     addBridgeMessage(originPart, guildPart, factionPart, messagePart, guildRealmPart)
+
+    -- Re-relay to other friends (mesh network) - but NOT if this came from guild chat
+    -- Only re-relay if sourceType is not "G" (guild originated)
+    if GuildBridgeDB.bridgeEnabled and sourcePart ~= "G" then
+        sendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart)
+    end
 end
 
 local function updateTabHighlights()
     for _, tab in pairs(tabButtons) do
         if tab.filterValue == currentFilter then
             tab.guildText:SetFontObject(GameFontHighlight)
-            tab.guildText:SetTextColor(1, 0.82, 0) -- Gold color for selected
+            tab.guildText:SetTextColor(1, 0.82, 0)
             tab.bg:SetColorTexture(0.2, 0.2, 0.3, 1)
-            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1) -- Gold border
+            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1)
             if tab.realmText then
                 tab.realmText:SetTextColor(0.7, 0.7, 0.7)
             end
             tab.selected = true
         else
             tab.guildText:SetFontObject(GameFontNormal)
-            tab.guildText:SetTextColor(0.8, 0.8, 0.8) -- Light gray
+            tab.guildText:SetTextColor(0.8, 0.8, 0.8)
             tab.bg:SetColorTexture(0.12, 0.12, 0.12, 0.9)
             tab.border:SetColorTexture(0.3, 0.3, 0.3, 1)
             if tab.realmText then
@@ -392,11 +461,24 @@ local function updateTabHighlights()
     end
 end
 
+-- Update connection status indicators - just show if we have online friends
+updateConnectionIndicators = function()
+    local hasOnlineFriends = #onlineFriends > 0
+    for _, tab in pairs(tabButtons) do
+        if tab.statusDot and tab.guildName then
+            if hasOnlineFriends then
+                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)  -- Green
+            else
+                tab.statusDot:SetColorTexture(0.8, 0.3, 0.3, 1)  -- Red
+            end
+        end
+    end
+end
+
 local function forgetGuild(filterKey)
     if not filterKey then return end
     knownGuilds[filterKey] = nil
     GuildBridgeDB.knownGuilds = knownGuilds
-    -- If we were filtering by this guild, switch to All
     if currentFilter == filterKey then
         currentFilter = nil
     end
@@ -404,7 +486,6 @@ local function forgetGuild(filterKey)
     refreshMessages()
 end
 
--- Context menu (created lazily)
 local contextMenu
 local forgetButton
 
@@ -455,7 +536,6 @@ local function ensureContextMenu()
         contextMenu:Hide()
     end)
 
-    -- Close menu when clicking outside
     contextMenu:SetScript("OnShow", function(self)
         self:SetPropagateKeyboardInput(true)
     end)
@@ -489,28 +569,32 @@ local function showContextMenu(filterKey, guildLabel)
     contextMenu:Show()
 end
 
-local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset)
+local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, guildName)
     local tab = CreateFrame("Frame", nil, parent)
     tab:SetSize(72, 34)
     tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -20)
     tab:SetFrameLevel(parent:GetFrameLevel() + 10)
     tab:EnableMouse(true)
     tab.filterValue = filterValue
+    tab.guildName = guildName
 
-    -- Background with border effect
     local bg = tab:CreateTexture(nil, "BACKGROUND")
     bg:SetPoint("TOPLEFT", 1, -1)
     bg:SetPoint("BOTTOMRIGHT", -1, 1)
     bg:SetColorTexture(0.15, 0.15, 0.15, 0.9)
     tab.bg = bg
 
-    -- Border
     local border = tab:CreateTexture(nil, "BORDER")
     border:SetAllPoints()
     border:SetColorTexture(0.4, 0.4, 0.4, 1)
     tab.border = border
 
-    -- Guild name (main label)
+    if guildName then
+        tab.statusDot = tab:CreateTexture(nil, "OVERLAY")
+        tab.statusDot:SetSize(8, 8)
+        tab.statusDot:SetPoint("TOPRIGHT", tab, "TOPRIGHT", -3, -3)
+    end
+
     tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     if realmLabel and realmLabel ~= "" then
         tab.guildText:SetPoint("TOP", tab, "TOP", 0, -5)
@@ -519,7 +603,6 @@ local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset)
     end
     tab.guildText:SetText(guildLabel)
 
-    -- Realm name (smaller, below)
     if realmLabel and realmLabel ~= "" then
         tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
         tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -2)
@@ -559,30 +642,34 @@ end
 rebuildTabs = function()
     if not mainFrame then return end
 
-    -- Clear existing tabs
     for key, tab in pairs(tabButtons) do
         tab:Hide()
         tab:SetParent(nil)
     end
     tabButtons = {}
 
-    -- Create "All" tab
     local xOffset = 8
     local tabSpacing = 4
-    tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset)
+    tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset, nil)
     xOffset = xOffset + 72 + tabSpacing
 
-    -- Create tabs for each known guild
+    local myGuildName = GetGuildInfo("player")
     local tabIndex = 1
     for filterKey, info in pairs(knownGuilds) do
-        local short = guildShortNames[info.guildName] or info.guildName or "?"
-        local realmLabel = info.realmName
-        tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset)
-        xOffset = xOffset + 72 + tabSpacing
-        tabIndex = tabIndex + 1
+        if info.guildName ~= myGuildName then
+            local short = guildShortNames[info.guildName] or info.guildName or "?"
+            local realmLabel = info.realmName
+            tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset, info.guildName)
+            xOffset = xOffset + 72 + tabSpacing
+            tabIndex = tabIndex + 1
+        end
     end
 
+    tabButtons.status = createTab(mainFrame, "Status", nil, "STATUS", xOffset, nil)
+    tabButtons.status.isStatusTab = true
+
     updateTabHighlights()
+    updateConnectionIndicators()
 end
 
 registerGuild = function(guildName, realmName)
@@ -593,7 +680,6 @@ registerGuild = function(guildName, realmName)
             guildName = guildName,
             realmName = realmName,
         }
-        -- Save to saved variables
         GuildBridgeDB.knownGuilds = knownGuilds
         rebuildTabs()
     end
@@ -617,10 +703,8 @@ local function createBridgeUI()
     mainFrame.title:SetPoint("LEFT", mainFrame.TitleBg, "LEFT", 5, 0)
     mainFrame.title:SetText("Guild Bridge")
 
-    -- Create initial "All" tab - more tabs added dynamically as guilds are seen
     rebuildTabs()
 
-    -- Mute own guild checkbox
     muteCheckbox = CreateFrame("CheckButton", nil, mainFrame, "UICheckButtonTemplate")
     muteCheckbox:SetSize(24, 24)
     muteCheckbox:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -10, -22)
@@ -669,7 +753,7 @@ local function createBridgeUI()
         self:ClearFocus()
     end)
 
-    mainFrame:Hide() -- start hidden, show with /gb
+    mainFrame:Hide()
 end
 
 local function toggleBridgeFrame()
@@ -687,6 +771,8 @@ eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
 eventFrame:RegisterEvent("CHAT_MSG_GUILD")
 eventFrame:RegisterEvent("BN_CHAT_MSG_ADDON")
+eventFrame:RegisterEvent("BN_FRIEND_INFO_CHANGED")
+eventFrame:RegisterEvent("BN_CONNECTED")
 
 eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -696,14 +782,16 @@ eventFrame:SetScript("OnEvent", function(self, event, ...)
             C_ChatInfo.RegisterAddonMessagePrefix(bridgeAddonPrefix)
             createBridgeUI()
         end
-    elseif event == "PLAYER_LOGIN" then
-        findPartnerGameAccount()
+    elseif event == "PLAYER_LOGIN" or event == "BN_CONNECTED" then
+        updateOnlineFriends()
+    elseif event == "BN_FRIEND_INFO_CHANGED" then
+        updateOnlineFriends()
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender = ...
         handleGuildChatMessage(text, sender)
     elseif event == "BN_CHAT_MSG_ADDON" then
-        local prefix, message = ...
-        handleBNAddonMessage(prefix, message)
+        local prefix, message, _, senderID = ...
+        handleBNAddonMessage(prefix, message, senderID)
     end
 end)
 
@@ -715,34 +803,23 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
 
     if msg == "" or msg == "show" then
         toggleBridgeFrame()
-    elseif msg == "enable" then
-        ensureSavedVariables()
-        GuildBridgeDB.bridgeEnabled = true
-        print("GuildBridge: mirroring enabled on this character.")
-    elseif msg == "disable" then
-        ensureSavedVariables()
-        GuildBridgeDB.bridgeEnabled = false
-        print("GuildBridge: mirroring disabled on this character.")
     elseif msg == "status" then
         ensureSavedVariables()
-        local status = GuildBridgeDB.bridgeEnabled and "enabled" or "disabled"
-        print("GuildBridge: mirroring is " .. status .. " on this character.")
-    elseif msg:sub(1, 7) == "partner" then
-        local btag = msg:match("^partner%s+(.+)$")
-        ensureSavedVariables()
-        if btag and btag ~= "" then
-            GuildBridgeDB.partnerBattleTag = btag
-            partnerBattleTag = btag
-            print("GuildBridge: partner BattleTag set to " .. btag)
-            findPartnerGameAccount()
-        else
-            print("GuildBridge: usage: /gbridge partner Battletag#1234")
+        print("GuildBridge: Online WoW friends (" .. #onlineFriends .. "):")
+        for _, friend in ipairs(onlineFriends) do
+            print("  |cff00ff00" .. friend.characterName .. "-" .. (friend.realmName or "") .. "|r")
         end
-    elseif msg == "reload" then
+        if #onlineFriends == 0 then
+            print("  No friends online.")
+        end
+    elseif msg == "reload" or msg == "refresh" then
         ensureSavedVariables()
-        findPartnerGameAccount()
-        print("GuildBridge: partner info refreshed.")
+        updateOnlineFriends()
+        print("GuildBridge: Friend list refreshed. " .. #onlineFriends .. " online.")
     else
-        print("GuildBridge: /gbridge, /gbridge show, /gbridge enable, /gbridge disable, /gbridge status, /gbridge partner Battletag#1234, /gbridge reload")
+        print("GuildBridge commands:")
+        print("  /gb - Toggle bridge window")
+        print("  /gbridge status - Show online friends")
+        print("  /gbridge reload - Refresh friend list")
     end
 end
