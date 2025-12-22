@@ -5,18 +5,32 @@ local bridgeAddonPrefix = "GuildBridge"
 local mainFrame
 local scrollFrame
 local inputBox
+local tabButtons = {}
+local muteCheckbox
 
 local eventFrame = CreateFrame("Frame")
 
+-- Current filter: nil = All, or guild-realm key
+local currentFilter = nil
+-- Store messages for filtering
+local messageHistory = {}
+-- Track unique guild+realm combinations we've seen
+local knownGuilds = {}
+
 local partnerBattleTag
 local partnerGameAccountID
-local lastEchoedGuildText
-local recentMessages = {}
-local recentMessagesLastCleanup = 0
 
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
     ["MAKE DUROTAR GREAT AGAIN"] = "MDGA",
+    ["Bestiez"] = "Bestiez",
+}
+
+-- Only relay messages from these guilds
+local allowedGuilds = {
+    ["MAKE ELWYNN GREAT AGAIN"] = true,
+    ["MAKE DUROTAR GREAT AGAIN"] = true,
+    ["Bestiez"] = true,
 }
 
 local function ensureSavedVariables()
@@ -28,6 +42,9 @@ local function ensureSavedVariables()
     end
     if GuildBridgeDB.partnerBattleTag == nil then
         GuildBridgeDB.partnerBattleTag = ""
+    end
+    if GuildBridgeDB.muteSend == nil then
+        GuildBridgeDB.muteSend = false
     end
     partnerBattleTag = GuildBridgeDB.partnerBattleTag
 end
@@ -73,38 +90,37 @@ local function findPartnerGameAccount()
     return false
 end
 
-local function cleanupRecentMessages()
-    local now = GetTime()
-    if now - recentMessagesLastCleanup < 30 then
-        return
+
+-- Create a filter key from guild name and realm
+local function makeFilterKey(guildName, realmName)
+    if not guildName then return nil end
+    if realmName and realmName ~= "" then
+        return guildName .. "-" .. realmName
     end
-    recentMessagesLastCleanup = now
-    for key, t in pairs(recentMessages) do
-        if now - t > 10 then
-            recentMessages[key] = nil
+    return guildName
+end
+
+-- Forward declaration
+local registerGuild
+
+local function refreshMessages()
+    if not scrollFrame then return end
+    scrollFrame:Clear()
+    for _, msg in ipairs(messageHistory) do
+        if currentFilter == nil or msg.filterKey == currentFilter then
+            scrollFrame:AddMessage(msg.formatted)
         end
     end
 end
-
--- Chat filter to hide the raw echoed bridge messages from guild chat
--- (we display them properly formatted via addBridgeMessage instead)
-local function guildChatFilter(self, event, msg, sender, ...)
-    if lastEchoedGuildText and msg == lastEchoedGuildText then
-        local senderName = sender:match("([^%-]+)") or sender
-        local myName = UnitName("player")
-        if senderName == myName then
-            lastEchoedGuildText = nil -- clear it now that we've matched
-            return true -- suppress this message, we already displayed it formatted
-        end
-    end
-    return false
-end
-
-ChatFrame_AddMessageEventFilter("CHAT_MSG_GUILD", guildChatFilter)
 
 local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
     local short = guildShortNames[guildName] or guildName or ""
-    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
+    -- Include realm in the tag to distinguish same-name guilds
+    local realmSuffix = ""
+    if realmName and realmName ~= "" then
+        realmSuffix = "-" .. realmName
+    end
+    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
     -- Create a clickable player link for inviting
     local fullName = senderName
@@ -114,9 +130,25 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. senderName .. "]|r|h"
 
     local formattedMessage = guildTag .. senderLink .. ": " .. messageText
+    local filterKey = makeFilterKey(guildName, realmName)
 
-    -- Add to the bridge UI
-    if scrollFrame then
+    -- Register this guild for tab creation
+    registerGuild(guildName, realmName)
+
+    -- Store message for filtering
+    table.insert(messageHistory, {
+        guildName = guildName,
+        realmName = realmName,
+        filterKey = filterKey,
+        formatted = formattedMessage,
+    })
+    -- Keep history limited
+    if #messageHistory > 500 then
+        table.remove(messageHistory, 1)
+    end
+
+    -- Add to the bridge UI if it matches current filter
+    if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
         scrollFrame:AddMessage(formattedMessage)
     end
 
@@ -124,7 +156,7 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
 end
 
-local function sendBridgePayload(originName, originRealm, messageText, sourceType)
+local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter)
     if not partnerGameAccountID then
         return
     end
@@ -134,10 +166,14 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
     sourceType = sourceType or "U"
 
     local playerGuildName = GetGuildInfo("player")
+    local playerRealm = GetRealmName()
     local factionGroup = select(1, UnitFactionGroup("player")) or "Unknown"
 
+    -- Payload format: guild|guildRealm|faction|originName|originRealm|sourceType|targetFilter|message
     local payload = bridgePayloadPrefix
         .. (playerGuildName or "")
+        .. "|"
+        .. (playerRealm or "")
         .. "|"
         .. factionGroup
         .. "|"
@@ -146,6 +182,8 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
         .. (originRealm or "")
         .. "|"
         .. sourceType
+        .. "|"
+        .. (targetFilter or "")
         .. "|"
         .. messageText
 
@@ -159,6 +197,11 @@ local function sendFromUI(messageText)
     if not messageText or messageText == "" then
         return
     end
+
+    -- If a filter is selected, only send to that guild+realm
+    -- If no filter (All), send to all
+    local targetFilter = currentFilter
+
     local originName, originRealm = UnitName("player")
     if not originRealm or originRealm == "" then
         originRealm = GetRealmName()
@@ -167,49 +210,34 @@ local function sendFromUI(messageText)
 
     -- Show in bridge window only (not default chat) for messages we send from the UI
     local short = guildShortNames[playerGuildName] or playerGuildName or ""
-    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
+    local realmSuffix = ""
+    if originRealm and originRealm ~= "" then
+        realmSuffix = "-" .. originRealm
+    end
+    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
     local fullName = originName .. "-" .. originRealm
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. originName .. "]|r|h"
-    if scrollFrame then
-        scrollFrame:AddMessage(guildTag .. senderLink .. ": " .. messageText)
+    local formattedMessage = guildTag .. senderLink .. ": " .. messageText
+    local filterKey = makeFilterKey(playerGuildName, originRealm)
+
+    -- Store message for filtering
+    table.insert(messageHistory, {
+        guildName = playerGuildName,
+        realmName = originRealm,
+        filterKey = filterKey,
+        formatted = formattedMessage,
+    })
+    if #messageHistory > 500 then
+        table.remove(messageHistory, 1)
     end
 
-    sendBridgePayload(originName, originRealm, messageText, "U")
+    if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
+        scrollFrame:AddMessage(formattedMessage)
+    end
+
+    sendBridgePayload(originName, originRealm, messageText, "U", targetFilter)
 end
 
-local function mirrorToGuild(senderName, guildName, factionTag, messageText, sourceType)
-    if not GuildBridgeDB.bridgeEnabled then
-        return
-    end
-    if not IsInGuild() then
-        return
-    end
-
-    local myGuildName = GetGuildInfo("player")
-    if not myGuildName then
-        return
-    end
-
-    if sourceType == "G" and guildName == myGuildName then
-        return
-    end
-
-    cleanupRecentMessages()
-
-    local short = guildShortNames[guildName] or guildName or ""
-    local guildTag = short ~= "" and ("<" .. short .. "> ") or ""
-    local line = guildTag .. senderName .. ": " .. messageText
-
-    local fingerprint = guildTag .. senderName .. ":" .. messageText
-    local now = GetTime()
-    if recentMessages[fingerprint] and now - recentMessages[fingerprint] < 2 then
-        return
-    end
-    recentMessages[fingerprint] = now
-
-    lastEchoedGuildText = line
-    SendChatMessage(line, "GUILD")
-end
 
 local function handleGuildChatMessage(text, sender)
     if not GuildBridgeDB.bridgeEnabled then
@@ -225,15 +253,21 @@ local function handleGuildChatMessage(text, sender)
         return
     end
 
+    -- Check if mute send is enabled
+    if GuildBridgeDB.muteSend then
+        return
+    end
+
+    -- Only relay from allowed guilds
+    local myGuildName = GetGuildInfo("player")
+    if not myGuildName or not allowedGuilds[myGuildName] then
+        return
+    end
+
     local originName, originRealm = sender:match("([^%-]+)%-?(.*)")
     originName = originName or sender
     if not originRealm or originRealm == "" then
         originRealm = GetRealmName()
-    end
-    local myName = UnitName("player")
-
-    if lastEchoedGuildText and text == lastEchoedGuildText and originName == myName then
-        return -- don't relay our own echoed message back
     end
 
     sendBridgePayload(originName, originRealm, text, "G")
@@ -250,8 +284,16 @@ local function handleBNAddonMessage(prefix, message)
     end
 
     local payload = text:sub(#bridgePayloadPrefix + 1)
-    local guildPart, factionPart, originPart, realmPart, sourcePart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+    -- New format: guild|guildRealm|faction|originName|originRealm|sourceType|targetFilter|message
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    -- Fallback for old format
+    if not messagePart then
+        guildPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        guildRealmPart = originRealmPart -- best guess for old format
+    end
 
     if not messagePart or not originPart or not sourcePart then
         return
@@ -260,12 +302,112 @@ local function handleBNAddonMessage(prefix, message)
     if guildPart == "" then
         guildPart = nil
     end
-    if realmPart == "" then
-        realmPart = nil
+    if guildRealmPart == "" then
+        guildRealmPart = nil
+    end
+    if originRealmPart == "" then
+        originRealmPart = nil
+    end
+    if targetPart == "" then
+        targetPart = nil
     end
 
-    addBridgeMessage(originPart, guildPart, factionPart, messagePart, realmPart)
-    mirrorToGuild(originPart, guildPart, factionPart, messagePart, sourcePart)
+    -- Only accept messages from allowed guilds
+    if guildPart and not allowedGuilds[guildPart] then
+        return
+    end
+
+    -- If message has a target filter (guild-realm), only process if we match
+    if targetPart and targetPart ~= "" then
+        local myGuildName = GetGuildInfo("player")
+        local myRealm = GetRealmName()
+        local myFilterKey = makeFilterKey(myGuildName, myRealm)
+        if myFilterKey ~= targetPart then
+            return
+        end
+    end
+
+    -- Use guild realm for the message display (to distinguish same-name guilds)
+    addBridgeMessage(originPart, guildPart, factionPart, messagePart, guildRealmPart)
+end
+
+local function updateTabHighlights()
+    for _, tab in pairs(tabButtons) do
+        if tab.filterValue == currentFilter then
+            tab:SetNormalFontObject(GameFontHighlight)
+            tab.selected = true
+        else
+            tab:SetNormalFontObject(GameFontNormal)
+            tab.selected = false
+        end
+    end
+end
+
+local function createTab(parent, label, filterValue, xOffset)
+    local tab = CreateFrame("Button", nil, parent)
+    tab:SetSize(70, 20)
+    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -25)
+    tab:SetNormalFontObject(GameFontNormal)
+    tab:SetHighlightFontObject(GameFontHighlight)
+    tab:SetText(label)
+    tab.filterValue = filterValue
+
+    local bg = tab:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetColorTexture(0.2, 0.2, 0.2, 0.8)
+
+    tab:SetScript("OnClick", function()
+        currentFilter = filterValue
+        updateTabHighlights()
+        refreshMessages()
+    end)
+
+    return tab
+end
+
+local function rebuildTabs()
+    if not mainFrame then return end
+
+    -- Clear existing tabs
+    for key, tab in pairs(tabButtons) do
+        tab:Hide()
+        tab:SetParent(nil)
+    end
+    tabButtons = {}
+
+    -- Create "All" tab
+    local xOffset = 10
+    tabButtons.all = createTab(mainFrame, "All", nil, xOffset)
+    xOffset = xOffset + 45
+
+    -- Create tabs for each known guild
+    local tabIndex = 1
+    for filterKey, info in pairs(knownGuilds) do
+        local short = guildShortNames[info.guildName] or info.guildName or "?"
+        local label = short
+        -- Add realm suffix for disambiguation (shortened)
+        if info.realmName then
+            local shortRealm = info.realmName:sub(1, 6)
+            label = short .. "-" .. shortRealm
+        end
+        tabButtons["guild" .. tabIndex] = createTab(mainFrame, label, filterKey, xOffset)
+        xOffset = xOffset + 75
+        tabIndex = tabIndex + 1
+    end
+
+    updateTabHighlights()
+end
+
+registerGuild = function(guildName, realmName)
+    if not guildName then return end
+    local filterKey = makeFilterKey(guildName, realmName)
+    if not knownGuilds[filterKey] then
+        knownGuilds[filterKey] = {
+            guildName = guildName,
+            realmName = realmName,
+        }
+        rebuildTabs()
+    end
 end
 
 local function createBridgeUI()
@@ -274,7 +416,7 @@ local function createBridgeUI()
     end
 
     mainFrame = CreateFrame("Frame", "GuildBridgeFrame", UIParent, "BasicFrameTemplateWithInset")
-    mainFrame:SetSize(420, 260)
+    mainFrame:SetSize(420, 300)
     mainFrame:SetPoint("CENTER")
     mainFrame:SetMovable(true)
     mainFrame:EnableMouse(true)
@@ -286,8 +428,23 @@ local function createBridgeUI()
     mainFrame.title:SetPoint("LEFT", mainFrame.TitleBg, "LEFT", 5, 0)
     mainFrame.title:SetText("Guild Bridge")
 
+    -- Create initial "All" tab - more tabs added dynamically as guilds are seen
+    rebuildTabs()
+
+    -- Mute own guild checkbox
+    muteCheckbox = CreateFrame("CheckButton", nil, mainFrame, "UICheckButtonTemplate")
+    muteCheckbox:SetSize(24, 24)
+    muteCheckbox:SetPoint("TOPRIGHT", mainFrame, "TOPRIGHT", -10, -22)
+    muteCheckbox.text = muteCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    muteCheckbox.text:SetPoint("RIGHT", muteCheckbox, "LEFT", -2, 0)
+    muteCheckbox.text:SetText("Mute Send")
+    muteCheckbox:SetChecked(GuildBridgeDB.muteSend or false)
+    muteCheckbox:SetScript("OnClick", function(self)
+        GuildBridgeDB.muteSend = self:GetChecked()
+    end)
+
     scrollFrame = CreateFrame("ScrollingMessageFrame", nil, mainFrame)
-    scrollFrame:SetPoint("TOPLEFT", 10, -30)
+    scrollFrame:SetPoint("TOPLEFT", 10, -50)
     scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
     scrollFrame:SetFontObject(GameFontHighlightSmall)
     scrollFrame:SetJustifyH("LEFT")
