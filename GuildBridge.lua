@@ -46,7 +46,12 @@ local function ensureSavedVariables()
     if GuildBridgeDB.muteSend == nil then
         GuildBridgeDB.muteSend = false
     end
+    if GuildBridgeDB.knownGuilds == nil then
+        GuildBridgeDB.knownGuilds = {}
+    end
     partnerBattleTag = GuildBridgeDB.partnerBattleTag
+    -- Restore known guilds from saved variables
+    knownGuilds = GuildBridgeDB.knownGuilds
 end
 
 local function findPartnerGameAccount()
@@ -100,8 +105,9 @@ local function makeFilterKey(guildName, realmName)
     return guildName
 end
 
--- Forward declaration
+-- Forward declarations
 local registerGuild
+local rebuildTabs
 
 local function refreshMessages()
     if not scrollFrame then return end
@@ -240,25 +246,14 @@ end
 
 
 local function handleGuildChatMessage(text, sender)
-    if not GuildBridgeDB.bridgeEnabled then
-        return
-    end
     if not IsInGuild() then
-        return
-    end
-    if not partnerGameAccountID then
         return
     end
     if not text or text == "" then
         return
     end
 
-    -- Check if mute send is enabled
-    if GuildBridgeDB.muteSend then
-        return
-    end
-
-    -- Only relay from allowed guilds
+    -- Only process from allowed guilds
     local myGuildName = GetGuildInfo("player")
     if not myGuildName or not allowedGuilds[myGuildName] then
         return
@@ -268,6 +263,48 @@ local function handleGuildChatMessage(text, sender)
     originName = originName or sender
     if not originRealm or originRealm == "" then
         originRealm = GetRealmName()
+    end
+
+    -- Always show in bridge window (but not default chat - it's already there from guild)
+    local short = guildShortNames[myGuildName] or myGuildName or ""
+    local realmSuffix = "-" .. originRealm
+    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
+    local fullName = originName .. "-" .. originRealm
+    local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. originName .. "]|r|h"
+    local formattedMessage = guildTag .. senderLink .. ": " .. text
+    local filterKey = makeFilterKey(myGuildName, originRealm)
+
+    -- Register guild and store message
+    registerGuild(myGuildName, originRealm)
+    table.insert(messageHistory, {
+        guildName = myGuildName,
+        realmName = originRealm,
+        filterKey = filterKey,
+        formatted = formattedMessage,
+    })
+    if #messageHistory > 500 then
+        table.remove(messageHistory, 1)
+    end
+
+    -- Show in bridge window if filter matches
+    if scrollFrame and (currentFilter == nil or filterKey == currentFilter) then
+        scrollFrame:AddMessage(formattedMessage)
+    end
+
+    -- Only relay to partner if bridge is enabled
+    if not GuildBridgeDB.bridgeEnabled then
+        return
+    end
+    if not partnerGameAccountID then
+        return
+    end
+
+    -- If mute is enabled, only skip relaying our own messages
+    if GuildBridgeDB.muteSend then
+        local myName = UnitName("player")
+        if originName == myName then
+            return
+        end
     end
 
     sendBridgePayload(originName, originRealm, text, "G")
@@ -335,57 +372,191 @@ local function updateTabHighlights()
     for _, tab in pairs(tabButtons) do
         if tab.filterValue == currentFilter then
             tab.guildText:SetFontObject(GameFontHighlight)
+            tab.guildText:SetTextColor(1, 0.82, 0) -- Gold color for selected
+            tab.bg:SetColorTexture(0.2, 0.2, 0.3, 1)
+            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1) -- Gold border
+            if tab.realmText then
+                tab.realmText:SetTextColor(0.7, 0.7, 0.7)
+            end
             tab.selected = true
         else
             tab.guildText:SetFontObject(GameFontNormal)
+            tab.guildText:SetTextColor(0.8, 0.8, 0.8) -- Light gray
+            tab.bg:SetColorTexture(0.12, 0.12, 0.12, 0.9)
+            tab.border:SetColorTexture(0.3, 0.3, 0.3, 1)
+            if tab.realmText then
+                tab.realmText:SetTextColor(0.5, 0.5, 0.5)
+            end
             tab.selected = false
         end
     end
 end
 
+local function forgetGuild(filterKey)
+    if not filterKey then return end
+    knownGuilds[filterKey] = nil
+    GuildBridgeDB.knownGuilds = knownGuilds
+    -- If we were filtering by this guild, switch to All
+    if currentFilter == filterKey then
+        currentFilter = nil
+    end
+    rebuildTabs()
+    refreshMessages()
+end
+
+-- Context menu (created lazily)
+local contextMenu
+local forgetButton
+
+local function ensureContextMenu()
+    if contextMenu then return end
+
+    contextMenu = CreateFrame("Frame", "GuildBridgeContextMenu", UIParent, "BackdropTemplate")
+    contextMenu:SetSize(120, 50)
+    contextMenu:SetFrameStrata("DIALOG")
+    contextMenu:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    contextMenu:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+    contextMenu:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+    contextMenu:Hide()
+
+    forgetButton = CreateFrame("Button", nil, contextMenu)
+    forgetButton:SetSize(110, 20)
+    forgetButton:SetPoint("TOP", contextMenu, "TOP", 0, -8)
+    forgetButton.text = forgetButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    forgetButton.text:SetPoint("CENTER")
+    forgetButton.text:SetText("Forget")
+    forgetButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    forgetButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(1, 0.82, 0)
+    end)
+    forgetButton.text:SetTextColor(1, 0.82, 0)
+
+    local cancelButton = CreateFrame("Button", nil, contextMenu)
+    cancelButton:SetSize(110, 20)
+    cancelButton:SetPoint("TOP", forgetButton, "BOTTOM", 0, -2)
+    cancelButton.text = cancelButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cancelButton.text:SetPoint("CENTER")
+    cancelButton.text:SetText("Cancel")
+    cancelButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    cancelButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(0.7, 0.7, 0.7)
+    end)
+    cancelButton.text:SetTextColor(0.7, 0.7, 0.7)
+    cancelButton:SetScript("OnClick", function()
+        contextMenu:Hide()
+    end)
+
+    -- Close menu when clicking outside
+    contextMenu:SetScript("OnShow", function(self)
+        self:SetPropagateKeyboardInput(true)
+    end)
+    contextMenu:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then
+            self:SetPropagateKeyboardInput(false)
+            self:Hide()
+        end
+    end)
+    contextMenu:SetScript("OnEvent", function(self, event)
+        if event == "GLOBAL_MOUSE_DOWN" then
+            if not MouseIsOver(self) then
+                self:Hide()
+            end
+        end
+    end)
+    contextMenu:RegisterEvent("GLOBAL_MOUSE_DOWN")
+end
+
+local function showContextMenu(filterKey, guildLabel)
+    ensureContextMenu()
+    forgetButton.text:SetText("Forget " .. guildLabel)
+    forgetButton:SetScript("OnClick", function()
+        forgetGuild(filterKey)
+        contextMenu:Hide()
+    end)
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    contextMenu:ClearAllPoints()
+    contextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+    contextMenu:Show()
+end
+
 local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset)
-    local tab = CreateFrame("Button", nil, parent)
-    tab:SetSize(70, 32)
-    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -22)
+    local tab = CreateFrame("Frame", nil, parent)
+    tab:SetSize(72, 34)
+    tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, -20)
+    tab:SetFrameLevel(parent:GetFrameLevel() + 10)
+    tab:EnableMouse(true)
     tab.filterValue = filterValue
 
+    -- Background with border effect
     local bg = tab:CreateTexture(nil, "BACKGROUND")
-    bg:SetAllPoints()
-    bg:SetColorTexture(0.2, 0.2, 0.2, 0.8)
+    bg:SetPoint("TOPLEFT", 1, -1)
+    bg:SetPoint("BOTTOMRIGHT", -1, 1)
+    bg:SetColorTexture(0.15, 0.15, 0.15, 0.9)
+    tab.bg = bg
+
+    -- Border
+    local border = tab:CreateTexture(nil, "BORDER")
+    border:SetAllPoints()
+    border:SetColorTexture(0.4, 0.4, 0.4, 1)
+    tab.border = border
 
     -- Guild name (main label)
     tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    tab.guildText:SetPoint("TOP", tab, "TOP", 0, -4)
+    if realmLabel and realmLabel ~= "" then
+        tab.guildText:SetPoint("TOP", tab, "TOP", 0, -5)
+    else
+        tab.guildText:SetPoint("CENTER", tab, "CENTER", 0, 0)
+    end
     tab.guildText:SetText(guildLabel)
 
     -- Realm name (smaller, below)
     if realmLabel and realmLabel ~= "" then
-        tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -1)
+        tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
+        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -2)
         tab.realmText:SetText(realmLabel)
-        tab.realmText:SetTextColor(0.6, 0.6, 0.6)
+        tab.realmText:SetTextColor(0.5, 0.5, 0.5)
     end
 
-    tab:SetScript("OnClick", function()
-        currentFilter = filterValue
-        updateTabHighlights()
-        refreshMessages()
+    tab:SetScript("OnMouseDown", function(self, button)
+        if button == "RightButton" and filterValue then
+            showContextMenu(filterValue, guildLabel)
+        elseif button == "LeftButton" then
+            currentFilter = filterValue
+            updateTabHighlights()
+            refreshMessages()
+        end
     end)
 
     tab:SetScript("OnEnter", function(self)
-        self.guildText:SetFontObject(GameFontHighlight)
+        if not self.selected then
+            self.guildText:SetTextColor(1, 1, 1)
+            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1)
+            self.border:SetColorTexture(0.5, 0.5, 0.5, 1)
+        end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if not self.selected then
-            self.guildText:SetFontObject(GameFontNormal)
+            self.guildText:SetTextColor(0.8, 0.8, 0.8)
+            self.bg:SetColorTexture(0.12, 0.12, 0.12, 0.9)
+            self.border:SetColorTexture(0.3, 0.3, 0.3, 1)
         end
     end)
 
     return tab
 end
 
-local function rebuildTabs()
+rebuildTabs = function()
     if not mainFrame then return end
 
     -- Clear existing tabs
@@ -396,9 +567,10 @@ local function rebuildTabs()
     tabButtons = {}
 
     -- Create "All" tab
-    local xOffset = 10
+    local xOffset = 8
+    local tabSpacing = 4
     tabButtons.all = createTab(mainFrame, "All", nil, nil, xOffset)
-    xOffset = xOffset + 50
+    xOffset = xOffset + 72 + tabSpacing
 
     -- Create tabs for each known guild
     local tabIndex = 1
@@ -406,7 +578,7 @@ local function rebuildTabs()
         local short = guildShortNames[info.guildName] or info.guildName or "?"
         local realmLabel = info.realmName
         tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset)
-        xOffset = xOffset + 75
+        xOffset = xOffset + 72 + tabSpacing
         tabIndex = tabIndex + 1
     end
 
@@ -421,6 +593,8 @@ registerGuild = function(guildName, realmName)
             guildName = guildName,
             realmName = realmName,
         }
+        -- Save to saved variables
+        GuildBridgeDB.knownGuilds = knownGuilds
         rebuildTabs()
     end
 end
@@ -459,7 +633,7 @@ local function createBridgeUI()
     end)
 
     scrollFrame = CreateFrame("ScrollingMessageFrame", nil, mainFrame)
-    scrollFrame:SetPoint("TOPLEFT", 10, -58)
+    scrollFrame:SetPoint("TOPLEFT", 10, -60)
     scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
     scrollFrame:SetFontObject(GameFontHighlightSmall)
     scrollFrame:SetJustifyH("LEFT")
