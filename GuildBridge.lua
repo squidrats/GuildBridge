@@ -26,8 +26,40 @@ local MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 -- Track online friends
 local onlineFriends = {}
 
--- Handshake tracking: gameAccountID -> { guildName, realmName, lastSeen }
+-- Handshake tracking: gameAccountID -> { guildName, realmName, guildHomeRealm, lastSeen }
 local connectedBridgeUsers = {}
+
+-- Anchor character name used to identify guild home realm
+-- Create a character with this name in each guild on the guild's home server
+local ANCHOR_CHARACTER_NAME = "Guildbridge"
+
+-- Get the guild's home realm by finding the anchor character
+local function getGuildHomeRealm()
+    if not IsInGuild() then return nil end
+
+    local numMembers = GetNumGuildMembers()
+    if not numMembers or numMembers == 0 then return nil end
+
+    -- Iterate through guild roster to find the anchor character
+    for i = 1, numMembers do
+        local name = GetGuildRosterInfo(i)
+        if name then
+            local charName, charRealm = strsplit("-", name)
+            if charName == ANCHOR_CHARACTER_NAME then
+                -- Anchor character found - use their realm
+                if charRealm and charRealm ~= "" then
+                    return charRealm
+                else
+                    -- No realm suffix means they're on our realm
+                    return GetRealmName()
+                end
+            end
+        end
+    end
+
+    -- Anchor character not found
+    return nil
+end
 
 local guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
@@ -122,16 +154,23 @@ local refreshMessages
 local recordGuildActivity
 local sendHandshake
 
--- Send a handshake message to all online friends
--- type: "HELLO" (announce), "PONG" (response to HELLO)
-local function sendHandshakeMessage(handshakeType, targetGameAccountID)
+-- Actually send the handshake payload
+local function doSendHandshake(handshakeType, targetGameAccountID)
     local myGuildName = GetGuildInfo("player")
     if not myGuildName or not allowedGuilds[myGuildName] then
         return
     end
 
     local myRealm = GetRealmName()
-    local payload = "[GBHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm
+    local guildHomeRealm = getGuildHomeRealm()
+
+    -- If we still don't have a guild home realm, don't send - wait for roster
+    if not guildHomeRealm then
+        return
+    end
+
+    -- Format: [GBHS]TYPE|guildName|playerRealm|guildHomeRealm
+    local payload = "[GBHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm
 
     if targetGameAccountID then
         -- Send to specific friend (PONG response)
@@ -145,6 +184,27 @@ local function sendHandshakeMessage(handshakeType, targetGameAccountID)
     end
 end
 
+-- Send a handshake message to all online friends
+-- type: "HELLO" (announce), "PONG" (response to HELLO)
+local function sendHandshakeMessage(handshakeType, targetGameAccountID)
+    local myGuildName = GetGuildInfo("player")
+    if not myGuildName or not allowedGuilds[myGuildName] then
+        return
+    end
+
+    -- Request fresh guild roster data first
+    if C_GuildInfo and C_GuildInfo.GuildRoster then
+        C_GuildInfo.GuildRoster()
+    else
+        GuildRoster()
+    end
+
+    -- Small delay to allow roster data to load, then send
+    C_Timer.After(0.5, function()
+        doSendHandshake(handshakeType, targetGameAccountID)
+    end)
+end
+
 -- Handle incoming handshake messages
 local function handleHandshakeMessage(message, senderGameAccountID)
     if not message or message:sub(1, 6) ~= "[GBHS]" then
@@ -152,7 +212,13 @@ local function handleHandshakeMessage(message, senderGameAccountID)
     end
 
     local data = message:sub(7)
-    local handshakeType, guildName, realmName = data:match("([^|]+)|([^|]+)|(.+)")
+    -- New format: TYPE|guildName|playerRealm|guildHomeRealm
+    local handshakeType, guildName, realmName, guildHomeRealm = data:match("([^|]+)|([^|]+)|([^|]*)|?(.*)$")
+
+    -- Fallback for old format without guildHomeRealm
+    if not guildHomeRealm or guildHomeRealm == "" then
+        guildHomeRealm = realmName
+    end
 
     if not handshakeType or not guildName then
         return true -- It was a handshake message, just malformed
@@ -163,10 +229,11 @@ local function handleHandshakeMessage(message, senderGameAccountID)
         return true
     end
 
-    -- Record this bridge user
+    -- Record this bridge user with guild home realm
     connectedBridgeUsers[senderGameAccountID] = {
         guildName = guildName,
         realmName = realmName,
+        guildHomeRealm = guildHomeRealm,
         lastSeen = GetTime(),
     }
 
@@ -189,11 +256,12 @@ local function hasConnectedUserInGuild(filterKey)
     for gameAccountID, info in pairs(connectedBridgeUsers) do
         -- Consider stale after 5 minutes
         if now - info.lastSeen < 300 then
-            local userFilterKey = info.guildName
-            if info.realmName and info.realmName ~= "" then
-                userFilterKey = info.guildName .. "-" .. info.realmName
+            -- filterKey is guildName-guildHomeRealm
+            local theirFilterKey = info.guildName
+            if info.guildHomeRealm and info.guildHomeRealm ~= "" then
+                theirFilterKey = info.guildName .. "-" .. info.guildHomeRealm
             end
-            if userFilterKey == filterKey then
+            if theirFilterKey == filterKey then
                 return true
             end
         end
@@ -255,8 +323,8 @@ refreshMessages = function()
 
         -- Get my info
         local myName = UnitName("player")
-        local myRealm = GetRealmName()
         local myGuildName = GetGuildInfo("player")
+        local myGuildHomeRealm = getGuildHomeRealm() or GetRealmName()
         local myShort = guildShortNames[myGuildName] or myGuildName or "No Guild"
 
         -- Collect connection pairs
@@ -280,7 +348,7 @@ refreshMessages = function()
                     charRealm = charRealm,
                     guildName = info.guildName,
                     guildShort = theirShort,
-                    guildRealm = info.realmName or "",
+                    guildHomeRealm = info.guildHomeRealm or info.realmName or "",
                 })
             end
         end
@@ -289,10 +357,10 @@ refreshMessages = function()
             scrollFrame:AddMessage("|cffff8888No bridge connections active.|r")
         else
             for _, conn in ipairs(connections) do
-                local myRealmSuffix = myRealm and myRealm ~= "" and ("-" .. myRealm) or ""
-                local theirRealmSuffix = conn.guildRealm ~= "" and ("-" .. conn.guildRealm) or ""
+                local myRealmSuffix = myGuildHomeRealm and myGuildHomeRealm ~= "" and ("-" .. myGuildHomeRealm) or ""
+                local theirRealmSuffix = conn.guildHomeRealm ~= "" and ("-" .. conn.guildHomeRealm) or ""
 
-                -- Format: <MyGuild-Realm> MyChar  <-->  TheirChar <TheirGuild-Realm>
+                -- Format: <MyGuild-GuildHomeRealm> MyChar  <-->  TheirChar <TheirGuild-GuildHomeRealm>
                 local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
                 local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
 
@@ -310,24 +378,31 @@ refreshMessages = function()
     end
 end
 
-local function addBridgeMessage(senderName, guildName, factionTag, messageText, realmName)
+local function addBridgeMessage(senderName, guildName, factionTag, messageText, senderRealm, guildHomeRealm)
+    -- Use guildName-guildHomeRealm as the unique key to distinguish same-name guilds
+    local filterKey = registerGuild(guildName, guildHomeRealm)
+
     local short = guildShortNames[guildName] or guildName or ""
+    -- Get the manually set realm for display, or use guildHomeRealm
+    local displayRealm = nil
+    if knownGuilds[filterKey] and knownGuilds[filterKey].manualRealm then
+        displayRealm = knownGuilds[filterKey].realmName
+    elseif guildHomeRealm and guildHomeRealm ~= "" then
+        displayRealm = guildHomeRealm
+    end
     local realmSuffix = ""
-    if realmName and realmName ~= "" then
-        realmSuffix = "-" .. realmName
+    if displayRealm and displayRealm ~= "" then
+        realmSuffix = "-" .. displayRealm
     end
     local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
     local fullName = senderName
-    if realmName and realmName ~= "" then
-        fullName = senderName .. "-" .. realmName
+    if senderRealm and senderRealm ~= "" then
+        fullName = senderName .. "-" .. senderRealm
     end
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. senderName .. "]|r|h"
 
     local formattedMessage = guildTag .. senderLink .. ": " .. messageText
-    local filterKey = makeFilterKey(guildName, realmName)
-
-    registerGuild(guildName, realmName)
 
     -- Record activity for connection indicator
     if recordGuildActivity then
@@ -336,7 +411,7 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
 
     table.insert(messageHistory, {
         guildName = guildName,
-        realmName = realmName,
+        guildHomeRealm = guildHomeRealm,
         filterKey = filterKey,
         formatted = formattedMessage,
     })
@@ -354,7 +429,7 @@ local function addBridgeMessage(senderName, guildName, factionTag, messageText, 
     end
 end
 
-local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm)
+local function sendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm)
     if not messageText or messageText == "" then
         return
     end
@@ -372,13 +447,15 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
 
     local guildName = overrideGuild or GetGuildInfo("player")
     local guildRealm = overrideGuildRealm or GetRealmName()
+    local guildHomeRealm = overrideGuildHomeRealm or getGuildHomeRealm() or guildRealm
     local factionGroup = select(1, UnitFactionGroup("player")) or "Unknown"
 
     -- Generate message ID for deduplication if not provided
     if not messageId or messageId == "" then
-        messageId = guildRealm .. "-" .. originName .. "-" .. GetTime()
+        messageId = guildHomeRealm .. "-" .. originName .. "-" .. GetTime()
     end
 
+    -- Payload format: [GB]guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|message
     local payload = bridgePayloadPrefix
         .. (guildName or "")
         .. "|"
@@ -395,6 +472,8 @@ local function sendBridgePayload(originName, originRealm, messageText, sourceTyp
         .. (targetFilter or "")
         .. "|"
         .. messageId
+        .. "|"
+        .. (guildHomeRealm or "")
         .. "|"
         .. messageText
 
@@ -419,21 +498,28 @@ local function sendFromUI(messageText)
         originRealm = GetRealmName()
     end
     local playerGuildName = GetGuildInfo("player")
+    local playerGuildHomeRealm = getGuildHomeRealm() or originRealm
+
+    -- Use guildName-guildHomeRealm as filter key
+    local filterKey = registerGuild(playerGuildName, playerGuildHomeRealm)
 
     local short = guildShortNames[playerGuildName] or playerGuildName or ""
-    local realmSuffix = ""
-    if originRealm and originRealm ~= "" then
-        realmSuffix = "-" .. originRealm
+    -- Get the manually set realm for display, or use guildHomeRealm
+    local displayRealm = nil
+    if knownGuilds[filterKey] and knownGuilds[filterKey].manualRealm then
+        displayRealm = knownGuilds[filterKey].realmName
+    else
+        displayRealm = playerGuildHomeRealm
     end
+    local realmSuffix = displayRealm and displayRealm ~= "" and ("-" .. displayRealm) or ""
     local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
     local fullName = originName .. "-" .. originRealm
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. originName .. "]|r|h"
     local formattedMessage = guildTag .. senderLink .. ": " .. messageText
-    local filterKey = makeFilterKey(playerGuildName, originRealm)
 
     table.insert(messageHistory, {
         guildName = playerGuildName,
-        realmName = originRealm,
+        guildHomeRealm = playerGuildHomeRealm,
         filterKey = filterKey,
         formatted = formattedMessage,
     })
@@ -472,18 +558,29 @@ local function handleGuildChatMessage(text, sender)
         originRealm = GetRealmName()
     end
 
+    -- Get guild home realm (GM's realm) for proper identification
+    local myGuildHomeRealm = getGuildHomeRealm() or originRealm
+
+    -- Use guildName-guildHomeRealm as filter key
+    local filterKey = registerGuild(myGuildName, myGuildHomeRealm)
+
     local short = guildShortNames[myGuildName] or myGuildName or ""
-    local realmSuffix = "-" .. originRealm
+    -- Get the manually set realm for display, or use guildHomeRealm
+    local displayRealm = nil
+    if knownGuilds[filterKey] and knownGuilds[filterKey].manualRealm then
+        displayRealm = knownGuilds[filterKey].realmName
+    else
+        displayRealm = myGuildHomeRealm
+    end
+    local realmSuffix = displayRealm and displayRealm ~= "" and ("-" .. displayRealm) or ""
     local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
     local fullName = originName .. "-" .. originRealm
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff00ff00[" .. originName .. "]|r|h"
     local formattedMessage = guildTag .. senderLink .. ": " .. text
-    local filterKey = makeFilterKey(myGuildName, originRealm)
 
-    registerGuild(myGuildName, originRealm)
     table.insert(messageHistory, {
         guildName = myGuildName,
-        realmName = originRealm,
+        guildHomeRealm = myGuildHomeRealm,
         filterKey = filterKey,
         formatted = formattedMessage,
     })
@@ -531,13 +628,25 @@ local function handleBNAddonMessage(prefix, message, senderID)
     end
 
     local payload = text:sub(#bridgePayloadPrefix + 1)
-    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, messagePart
 
+    -- New format with guildHomeRealm: guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|message
+    guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    -- Fallback to old format without guildHomeRealm
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        guildHomeRealmPart = nil
+    end
+
+    -- Fallback for even older format
     if not messagePart then
         guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
             payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
         messageIdPart = nil
+        guildHomeRealmPart = nil
     end
 
     if not messagePart then
@@ -545,6 +654,7 @@ local function handleBNAddonMessage(prefix, message, senderID)
             payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
         guildRealmPart = originRealmPart
         messageIdPart = nil
+        guildHomeRealmPart = nil
     end
 
     if not messagePart or not originPart or not sourcePart then
@@ -556,13 +666,19 @@ local function handleBNAddonMessage(prefix, message, senderID)
     if originRealmPart == "" then originRealmPart = nil end
     if targetPart == "" then targetPart = nil end
     if messageIdPart == "" then messageIdPart = nil end
+    if guildHomeRealmPart == "" then guildHomeRealmPart = nil end
+
+    -- Fallback: use guild realm as home realm if not provided
+    if not guildHomeRealmPart then
+        guildHomeRealmPart = guildRealmPart
+    end
 
     -- Only accept messages from allowed guilds
     if guildPart and not allowedGuilds[guildPart] then
         return
     end
 
-    -- Check for duplicate message using hash
+    -- Check for duplicate message using hash (include guildHomeRealm for uniqueness)
     local hash = makeMessageHash(guildPart or "", originPart, originRealmPart or "", messagePart)
     if isDuplicateMessage(hash) then
         return
@@ -571,20 +687,23 @@ local function handleBNAddonMessage(prefix, message, senderID)
     -- If message has a target filter, only process if we match
     if targetPart and targetPart ~= "" then
         local myGuildName = GetGuildInfo("player")
-        local myRealm = GetRealmName()
-        local myFilterKey = makeFilterKey(myGuildName, myRealm)
+        local myGuildHomeRealm = getGuildHomeRealm() or GetRealmName()
+        local myFilterKey = myGuildName
+        if myGuildHomeRealm and myGuildHomeRealm ~= "" then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
         if myFilterKey ~= targetPart then
             return
         end
     end
 
-    -- Display the message
-    addBridgeMessage(originPart, guildPart, factionPart, messagePart, guildRealmPart)
+    -- Display the message (pass guildHomeRealm for proper filtering)
+    addBridgeMessage(originPart, guildPart, factionPart, messagePart, guildRealmPart, guildHomeRealmPart)
 
     -- Re-relay to other friends (mesh network) - but NOT if this came from guild chat
     -- Only re-relay if sourceType is not "G" (guild originated)
     if GuildBridgeDB.bridgeEnabled and sourcePart ~= "G" then
-        sendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart)
+        sendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart)
     end
 end
 
@@ -658,12 +777,101 @@ end
 
 local contextMenu
 local forgetButton
+local setRealmButton
+local realmInputDialog
+
+local function setGuildRealm(guildName, newRealm)
+    -- Find and update the guild entry
+    for filterKey, info in pairs(knownGuilds) do
+        if info.guildName == guildName then
+            -- Update the realm
+            info.realmName = newRealm
+            info.manualRealm = true  -- Mark as manually set
+            GuildBridgeDB.knownGuilds = knownGuilds
+            rebuildTabs()
+            return
+        end
+    end
+end
+
+local function showRealmInputDialog(guildName)
+    if not realmInputDialog then
+        realmInputDialog = CreateFrame("Frame", "GuildBridgeRealmDialog", UIParent, "BackdropTemplate")
+        realmInputDialog:SetSize(220, 90)
+        realmInputDialog:SetPoint("CENTER")
+        realmInputDialog:SetFrameStrata("DIALOG")
+        realmInputDialog:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        realmInputDialog:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+        realmInputDialog:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+        realmInputDialog:EnableMouse(true)
+        realmInputDialog:SetMovable(true)
+        realmInputDialog:RegisterForDrag("LeftButton")
+        realmInputDialog:SetScript("OnDragStart", realmInputDialog.StartMoving)
+        realmInputDialog:SetScript("OnDragStop", realmInputDialog.StopMovingOrSizing)
+
+        realmInputDialog.title = realmInputDialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        realmInputDialog.title:SetPoint("TOP", 0, -10)
+        realmInputDialog.title:SetText("Set Realm")
+
+        realmInputDialog.editBox = CreateFrame("EditBox", nil, realmInputDialog, "InputBoxTemplate")
+        realmInputDialog.editBox:SetSize(180, 20)
+        realmInputDialog.editBox:SetPoint("TOP", realmInputDialog.title, "BOTTOM", 0, -10)
+        realmInputDialog.editBox:SetAutoFocus(true)
+
+        realmInputDialog.okButton = CreateFrame("Button", nil, realmInputDialog, "UIPanelButtonTemplate")
+        realmInputDialog.okButton:SetSize(60, 22)
+        realmInputDialog.okButton:SetPoint("BOTTOMRIGHT", realmInputDialog, "BOTTOM", -5, 10)
+        realmInputDialog.okButton:SetText("OK")
+
+        realmInputDialog.cancelButton = CreateFrame("Button", nil, realmInputDialog, "UIPanelButtonTemplate")
+        realmInputDialog.cancelButton:SetSize(60, 22)
+        realmInputDialog.cancelButton:SetPoint("BOTTOMLEFT", realmInputDialog, "BOTTOM", 5, 10)
+        realmInputDialog.cancelButton:SetText("Cancel")
+        realmInputDialog.cancelButton:SetScript("OnClick", function()
+            realmInputDialog:Hide()
+        end)
+
+        realmInputDialog.editBox:SetScript("OnEscapePressed", function()
+            realmInputDialog:Hide()
+        end)
+
+        realmInputDialog:Hide()
+    end
+
+    realmInputDialog.title:SetText("Set Realm for " .. guildName)
+    realmInputDialog.editBox:SetText("")
+
+    realmInputDialog.editBox:SetScript("OnEnterPressed", function(self)
+        local realm = self:GetText()
+        if realm and realm ~= "" then
+            setGuildRealm(realmInputDialog.guildName, realm)
+        end
+        realmInputDialog:Hide()
+    end)
+
+    realmInputDialog.okButton:SetScript("OnClick", function()
+        local realm = realmInputDialog.editBox:GetText()
+        if realm and realm ~= "" then
+            setGuildRealm(realmInputDialog.guildName, realm)
+        end
+        realmInputDialog:Hide()
+    end)
+
+    realmInputDialog.guildName = guildName
+    realmInputDialog:Show()
+    realmInputDialog.editBox:SetFocus()
+end
 
 local function ensureContextMenu()
     if contextMenu then return end
 
     contextMenu = CreateFrame("Frame", "GuildBridgeContextMenu", UIParent, "BackdropTemplate")
-    contextMenu:SetSize(120, 50)
+    contextMenu:SetSize(120, 72)
     contextMenu:SetFrameStrata("DIALOG")
     contextMenu:SetBackdrop({
         bgFile = "Interface/Tooltips/UI-Tooltip-Background",
@@ -675,9 +883,23 @@ local function ensureContextMenu()
     contextMenu:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
     contextMenu:Hide()
 
+    setRealmButton = CreateFrame("Button", nil, contextMenu)
+    setRealmButton:SetSize(110, 20)
+    setRealmButton:SetPoint("TOP", contextMenu, "TOP", 0, -8)
+    setRealmButton.text = setRealmButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    setRealmButton.text:SetPoint("CENTER")
+    setRealmButton.text:SetText("Set Realm")
+    setRealmButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    setRealmButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(1, 0.82, 0)
+    end)
+    setRealmButton.text:SetTextColor(1, 0.82, 0)
+
     forgetButton = CreateFrame("Button", nil, contextMenu)
     forgetButton:SetSize(110, 20)
-    forgetButton:SetPoint("TOP", contextMenu, "TOP", 0, -8)
+    forgetButton:SetPoint("TOP", setRealmButton, "BOTTOM", 0, -2)
     forgetButton.text = forgetButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     forgetButton.text:SetPoint("CENTER")
     forgetButton.text:SetText("Forget")
@@ -717,7 +939,7 @@ local function ensureContextMenu()
     end)
     contextMenu:SetScript("OnEvent", function(self, event)
         if event == "GLOBAL_MOUSE_DOWN" then
-            if not MouseIsOver(self) then
+            if not MouseIsOver(self) and not (realmInputDialog and realmInputDialog:IsShown()) then
                 self:Hide()
             end
         end
@@ -725,8 +947,12 @@ local function ensureContextMenu()
     contextMenu:RegisterEvent("GLOBAL_MOUSE_DOWN")
 end
 
-local function showContextMenu(filterKey, guildLabel)
+local function showContextMenu(filterKey, guildLabel, guildName)
     ensureContextMenu()
+    setRealmButton:SetScript("OnClick", function()
+        contextMenu:Hide()
+        showRealmInputDialog(guildName)
+    end)
     forgetButton.text:SetText("Forget " .. guildLabel)
     forgetButton:SetScript("OnClick", function()
         forgetGuild(filterKey)
@@ -782,8 +1008,8 @@ local function createTab(parent, guildLabel, realmLabel, filterValue, xOffset, y
     end
 
     tab:SetScript("OnMouseDown", function(self, button)
-        if button == "RightButton" and filterValue and filterValue ~= "STATUS" then
-            showContextMenu(filterValue, guildLabel)
+        if button == "RightButton" and filterValue and guildName then
+            showContextMenu(filterValue, guildLabel, guildName)
         elseif button == "LeftButton" then
             currentFilter = filterValue
             updateTabHighlights()
@@ -980,7 +1206,13 @@ rebuildTabs = function()
             end
 
             local short = guildShortNames[info.guildName] or info.guildName or "?"
-            local realmLabel = info.realmName
+            -- Show manually set realm if available, otherwise show guild home realm (from GM)
+            local realmLabel = nil
+            if info.manualRealm and info.realmName then
+                realmLabel = info.realmName
+            elseif info.guildHomeRealm then
+                realmLabel = info.guildHomeRealm
+            end
             tabButtons["guild" .. tabIndex] = createTab(mainFrame, short, realmLabel, filterKey, xOffset, yOffset, info.guildName, tabWidth)
             xOffset = xOffset + tabWidth + tabSpacing
             tabIndex = tabIndex + 1
@@ -992,17 +1224,24 @@ rebuildTabs = function()
     updateConnectionIndicators()
 end
 
-registerGuild = function(guildName, realmName)
+registerGuild = function(guildName, guildHomeRealm)
     if not guildName then return end
-    local filterKey = makeFilterKey(guildName, realmName)
+    -- Use guildName-guildHomeRealm as the unique key to distinguish same-name guilds on different server clusters
+    local filterKey = guildName
+    if guildHomeRealm and guildHomeRealm ~= "" then
+        filterKey = guildName .. "-" .. guildHomeRealm
+    end
     if not knownGuilds[filterKey] then
         knownGuilds[filterKey] = {
             guildName = guildName,
-            realmName = realmName,
+            guildHomeRealm = guildHomeRealm,  -- GM's realm = guild's home server
+            realmName = nil,  -- Display realm, can be set manually by user
+            manualRealm = false,
         }
         GuildBridgeDB.knownGuilds = knownGuilds
         rebuildTabs()
     end
+    return filterKey
 end
 
 local function createBridgeUI()
@@ -1044,7 +1283,7 @@ local function createBridgeUI()
     filterChatCheckbox:SetPoint("RIGHT", muteCheckbox.text, "LEFT", -10, 0)
     filterChatCheckbox.text = filterChatCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     filterChatCheckbox.text:SetPoint("RIGHT", filterChatCheckbox, "LEFT", -2, 0)
-    filterChatCheckbox.text:SetText("Filter Chat")
+    filterChatCheckbox.text:SetText("Filter Native Chat Also")
     filterChatCheckbox:SetChecked(GuildBridgeDB.filterNativeChat or false)
     filterChatCheckbox:SetScript("OnClick", function(self)
         GuildBridgeDB.filterNativeChat = self:GetChecked()
