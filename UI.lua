@@ -861,21 +861,36 @@ function GB:CreateBridgeUI()
     end)
 
     -- Resize grip (bottom-right corner) - larger hit area for easier clicking
-    local resizeGrip = CreateFrame("Button", nil, self.mainFrame)
+    local resizeGrip = CreateFrame("Frame", nil, self.mainFrame)
     resizeGrip:SetSize(24, 24)
     resizeGrip:SetPoint("BOTTOMRIGHT", 0, 0)
-    resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
-    resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
-    resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    resizeGrip:GetNormalTexture():SetVertexColor(0.6, 0.6, 0.6, 0.8)
-    resizeGrip:GetHighlightTexture():SetVertexColor(0.8, 0.8, 0.8, 1)
-    resizeGrip:SetScript("OnMouseDown", function()
+    resizeGrip:EnableMouse(true)
+
+    -- Visual textures
+    local gripTexture = resizeGrip:CreateTexture(nil, "ARTWORK")
+    gripTexture:SetAllPoints()
+    gripTexture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    gripTexture:SetVertexColor(0.6, 0.6, 0.6, 0.8)
+    resizeGrip.texture = gripTexture
+
+    resizeGrip:SetScript("OnEnter", function(self)
+        self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+        self.texture:SetVertexColor(0.8, 0.8, 0.8, 1)
+    end)
+    resizeGrip:SetScript("OnLeave", function(self)
+        self.texture:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+        self.texture:SetVertexColor(0.6, 0.6, 0.6, 0.8)
+    end)
+
+    -- Use drag for resizing - only triggers when actually dragging, not on click
+    resizeGrip:RegisterForDrag("LeftButton")
+    resizeGrip:SetScript("OnDragStart", function()
         GB.mainFrame:StartSizing("BOTTOMRIGHT")
     end)
-    resizeGrip:SetScript("OnMouseUp", function()
+    resizeGrip:SetScript("OnDragStop", function()
         GB.mainFrame:StopMovingOrSizing()
         GB:SaveWindowPosition()
-        GB:RebuildTabs()  -- Recalculate tab layout
+        GB:RebuildTabs()
     end)
     self.mainFrame.resizeGrip = resizeGrip
 
@@ -967,20 +982,37 @@ function GB:CreateBridgeUI()
     -- Track if we're programmatically updating the scrollbar (to avoid feedback loop)
     local updatingScrollBar = false
 
+    -- Estimate how many lines fit in the visible area
+    local function getVisibleLineCount()
+        local frameHeight = self.scrollFrame:GetHeight()
+        local _, fontHeight = self.scrollFrame:GetFontObject():GetFont()
+        local spacing = self.scrollFrame:GetSpacing() or 0
+        local lineHeight = fontHeight + spacing
+        if lineHeight <= 0 then lineHeight = 14 end  -- Fallback
+        return math.max(1, math.floor(frameHeight / lineHeight))
+    end
+
     -- Update scrollbar to reflect current scroll position
     -- ScrollingMessageFrame: offset 0 = viewing bottom (newest), higher offset = viewing older (top)
     -- Slider: value 0 = thumb at top (oldest), value max = thumb at bottom (newest)
     -- So we need to INVERT: sliderValue = maxOffset - scrollOffset
     local function updateScrollBar()
         local numMessages = self.scrollFrame:GetNumMessages()
-        local maxOffset = math.max(0, numMessages - 1)
+        local visibleLines = getVisibleLineCount()
+        -- Max offset is when first message is at bottom of visible area
+        local maxOffset = math.max(0, numMessages - visibleLines)
 
-        if numMessages <= 1 then
+        if maxOffset <= 0 then
+            -- All messages fit in view, no scrolling needed
             scrollBarTrack:Hide()
             return
         end
 
         local currentOffset = self.scrollFrame:GetScrollOffset()
+        -- Clamp current offset to valid range
+        if currentOffset > maxOffset then
+            currentOffset = maxOffset
+        end
 
         updatingScrollBar = true
         scrollBar:SetMinMaxValues(0, maxOffset)
