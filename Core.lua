@@ -9,8 +9,6 @@ GuildBridge = GB
 -- Constants
 GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
 GB.BRIDGE_ADDON_PREFIX = "GuildBridge"
-GB.ANCHOR_CHARACTER_NAME = "Guildbridge"
-GB.USE_FALLBACK_REALM = true
 GB.MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 GB.HANDSHAKE_THROTTLE = 10    -- seconds
 
@@ -24,6 +22,7 @@ GB.onlineFriends = {}         -- Track online friends
 GB.connectedBridgeUsers = {}  -- gameAccountID -> { guildName, realmName, guildHomeRealm, lastSeen }
 GB.lastGuildActivity = {}     -- filterKey -> last message timestamp
 GB.lastHandshakeTime = 0      -- Throttle handshake sending
+GB.guildChatFrames = {}       -- Track which chat frames have guild chat enabled
 
 -- UI references (populated by UI module)
 GB.mainFrame = nil
@@ -96,38 +95,23 @@ function GB:MakeFilterKey(guildName, realmName)
     return guildName
 end
 
--- Get the guild's home realm by finding the anchor character
+-- Get the guild's home realm using the API
+-- GetGuildInfo returns the guild's realm as the 4th value (nil if same as player's realm)
 function GB:GetGuildHomeRealm()
     if not IsInGuild() then return nil end
 
-    local numMembers = GetNumGuildMembers()
-    if not numMembers or numMembers == 0 then
-        if self.USE_FALLBACK_REALM then
+    -- GetGuildInfo returns: guildName, guildRankName, guildRankIndex, guildRealm
+    -- guildRealm is nil if the guild is on the same realm as the player
+    local guildName, _, _, guildRealm = GetGuildInfo("player")
+    if guildName then
+        if guildRealm and guildRealm ~= "" then
+            return guildRealm
+        else
+            -- Guild is on player's realm
             return GetRealmName()
         end
-        return nil
     end
 
-    -- Iterate through guild roster to find the anchor character
-    for i = 1, numMembers do
-        local name = GetGuildRosterInfo(i)
-        if name then
-            local charName, charRealm = strsplit("-", name)
-            if charName == self.ANCHOR_CHARACTER_NAME then
-                -- Anchor character found - use their realm
-                if charRealm and charRealm ~= "" then
-                    return charRealm
-                else
-                    -- No realm suffix means they're on our realm
-                    return GetRealmName()
-                end
-            end
-        end
-    end
-
-    -- Anchor character not found - use fallback if enabled
-    if self.USE_FALLBACK_REALM then
-        return GetRealmName()
-    end
-    return nil
+    -- GetGuildInfo not ready yet, use player's realm as fallback
+    return GetRealmName()
 end

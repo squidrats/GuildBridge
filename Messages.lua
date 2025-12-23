@@ -3,19 +3,35 @@
 
 local addonName, GB = ...
 
--- Register a guild (for tracking discovered guilds)
-function GB:RegisterGuild(guildName, guildHomeRealm)
-    if not guildName then return end
-    -- Use guildName-guildHomeRealm as the unique key to distinguish same-name guilds on different server clusters
-    local filterKey = guildName
-    if guildHomeRealm and guildHomeRealm ~= "" then
-        filterKey = guildName .. "-" .. guildHomeRealm
+-- Get guild club ID for unique identification
+local function getGuildClubId()
+    if C_Club and C_Club.GetGuildClubId then
+        return C_Club.GetGuildClubId()
     end
+    return nil
+end
+
+-- Register a guild (for tracking discovered guilds)
+-- guildClubId is used to uniquely identify guilds with the same name
+function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
+    if not guildName then return end
+
+    -- Use guildClubId as primary key if available, otherwise fall back to guildName-guildHomeRealm
+    local filterKey
+    if guildClubId then
+        filterKey = guildName .. "-" .. guildClubId
+    elseif guildHomeRealm and guildHomeRealm ~= "" then
+        filterKey = guildName .. "-" .. guildHomeRealm
+    else
+        filterKey = guildName
+    end
+
     if not self.knownGuilds[filterKey] then
         self.knownGuilds[filterKey] = {
             guildName = guildName,
             guildHomeRealm = guildHomeRealm,  -- GM's realm = guild's home server
-            realmName = nil,  -- Display realm, can be set manually by user
+            guildClubId = guildClubId,        -- Unique guild ID
+            realmName = nil,                  -- Display realm, can be set manually by user
             manualRealm = false,
         }
         GuildBridgeDB.knownGuilds = self.knownGuilds
@@ -23,15 +39,21 @@ function GB:RegisterGuild(guildName, guildHomeRealm)
         if self.RebuildTabs then
             self:RebuildTabs()
         end
+    else
+        -- Update clubId if we didn't have it before
+        if guildClubId and not self.knownGuilds[filterKey].guildClubId then
+            self.knownGuilds[filterKey].guildClubId = guildClubId
+            GuildBridgeDB.knownGuilds = self.knownGuilds
+        end
     end
     return filterKey
 end
 
 -- Add a bridge message to the display
 -- Now includes class color support and proper realm display for cross-realm invites
-function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, senderRealm, guildHomeRealm, classFile)
-    -- Use guildName-guildHomeRealm as the unique key to distinguish same-name guilds
-    local filterKey = self:RegisterGuild(guildName, guildHomeRealm)
+function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, senderRealm, guildHomeRealm, classFile, guildClubId)
+    -- Use guildClubId or guildHomeRealm as the unique key to distinguish same-name guilds
+    local filterKey = self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
 
     local short = self.guildShortNames[guildName] or guildName or ""
     -- Get the manually set realm for display, or use guildHomeRealm
@@ -88,13 +110,14 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     end
 
     -- Only show in native chat if filter is off, or if message matches the current filter
+    -- Send to all chat frames that have guild chat enabled (follows guild chat window settings)
     if not GuildBridgeDB.filterNativeChat or self.currentFilter == nil or filterKey == self.currentFilter then
-        DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, 0.25, 1.0, 0.25)
+        self:AddMessageToGuildChatFrames(formattedMessage, 0.25, 1.0, 0.25)
     end
 end
 
 -- Send bridge payload to all online friends
-function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile)
+function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
     if not messageText or messageText == "" then
         return
     end
@@ -113,6 +136,7 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
     local guildName = overrideGuild or GetGuildInfo("player")
     local guildRealm = overrideGuildRealm or GetRealmName()
     local guildHomeRealm = overrideGuildHomeRealm or self:GetGuildHomeRealm() or guildRealm
+    local guildClubId = overrideGuildClubId or getGuildClubId()
     local factionGroup = select(1, UnitFactionGroup("player")) or "Unknown"
 
     -- Generate message ID for deduplication if not provided
@@ -120,7 +144,7 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
         messageId = guildHomeRealm .. "-" .. originName .. "-" .. GetTime()
     end
 
-    -- Payload format: [GB]guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|classFile|message
+    -- Payload format: [GB]guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|classFile|guildClubId|message
     local payload = self.BRIDGE_PAYLOAD_PREFIX
         .. (guildName or "")
         .. "|"
@@ -141,6 +165,8 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
         .. (guildHomeRealm or "")
         .. "|"
         .. (classFile or "")
+        .. "|"
+        .. (guildClubId or "")
         .. "|"
         .. messageText
 
@@ -321,17 +347,25 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     end
 
     local payload = text:sub(#self.BRIDGE_PAYLOAD_PREFIX + 1)
-    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, messagePart
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart
 
-    -- New format with classFile: guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|classFile|message
-    guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, messagePart =
-        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+    -- New format with guildClubId: guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|classFile|guildClubId|message
+    guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    -- Fallback to format without guildClubId
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        guildClubIdPart = nil
+    end
 
     -- Fallback to format without classFile
     if not messagePart then
         guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, messagePart =
             payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
         classFilePart = nil
+        guildClubIdPart = nil
     end
 
     -- Fallback to old format without guildHomeRealm
@@ -340,6 +374,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
             payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
         guildHomeRealmPart = nil
         classFilePart = nil
+        guildClubIdPart = nil
     end
 
     -- Fallback for even older format
@@ -349,15 +384,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         messageIdPart = nil
         guildHomeRealmPart = nil
         classFilePart = nil
-    end
-
-    if not messagePart then
-        guildPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messagePart =
-            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
-        guildRealmPart = originRealmPart
-        messageIdPart = nil
-        guildHomeRealmPart = nil
-        classFilePart = nil
+        guildClubIdPart = nil
     end
 
     if not messagePart or not originPart or not sourcePart then
@@ -371,6 +398,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     if messageIdPart == "" then messageIdPart = nil end
     if guildHomeRealmPart == "" then guildHomeRealmPart = nil end
     if classFilePart == "" then classFilePart = nil end
+    if guildClubIdPart == "" then guildClubIdPart = nil end
 
     -- Fallback: use guild realm as home realm if not provided
     if not guildHomeRealmPart then
@@ -401,13 +429,16 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         end
     end
 
-    -- Display the message (pass guildHomeRealm and classFile for proper filtering and coloring)
-    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart)
+    -- Update connection status - receiving a message means they're connected
+    self:UpdateConnectionFromMessage(senderID, guildPart, guildHomeRealmPart, guildRealmPart, guildClubIdPart)
+
+    -- Display the message (pass guildHomeRealm, classFile, and guildClubId for proper filtering and coloring)
+    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
 
     -- Re-relay to other friends (mesh network) - but NOT if this came from guild chat
     -- Only re-relay if sourceType is not "G" (guild originated)
     if GuildBridgeDB.bridgeEnabled and sourcePart ~= "G" then
-        self:SendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart)
+        self:SendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
 end
 
@@ -416,32 +447,21 @@ function GB:RefreshMessages()
     if not self.scrollFrame then return end
     self.scrollFrame:Clear()
 
-    -- If Status page is selected, show connection pairs
+    -- If Status page is selected, show bridge connections only
     if self.currentPage == "status" then
-        self.scrollFrame:AddMessage("|cff88ffffBridge Connections:|r")
-        self.scrollFrame:AddMessage("")
-
-        -- Get my info
         local myName = UnitName("player")
         local myGuildName = GetGuildInfo("player")
         local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
         local myShort = self.guildShortNames[myGuildName] or myGuildName or "No Guild"
+        local now = GetTime()
 
         -- Collect connection pairs
         local connections = {}
-        local now = GetTime()
         for gameAccountID, info in pairs(self.connectedBridgeUsers) do
             if now - info.lastSeen < 300 then
-                -- Find character name from onlineFriends
-                local charName = "Unknown"
-                local charRealm = info.realmName or ""
-                for _, friend in ipairs(self.onlineFriends) do
-                    if friend.gameAccountID == gameAccountID then
-                        charName = friend.characterName or "Unknown"
-                        charRealm = friend.realmName or info.realmName or ""
-                        break
-                    end
-                end
+                -- Use stored character name, or fall back to "Unknown"
+                local charName = info.characterName or "Unknown"
+                local charRealm = info.characterRealm or info.realmName or ""
                 local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
                 table.insert(connections, {
                     charName = charName,
@@ -460,13 +480,13 @@ function GB:RefreshMessages()
                 local myRealmSuffix = myGuildHomeRealm and myGuildHomeRealm ~= "" and ("-" .. myGuildHomeRealm) or ""
                 local theirRealmSuffix = conn.guildHomeRealm ~= "" and ("-" .. conn.guildHomeRealm) or ""
 
-                -- Format: <MyGuild-GuildHomeRealm> MyChar  <-->  TheirChar <TheirGuild-GuildHomeRealm>
                 local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
                 local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
 
                 self.scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide)
             end
         end
+
         return
     end
 

@@ -79,10 +79,14 @@ function GB:HasConnectedUserInGuild(filterKey)
     for gameAccountID, info in pairs(self.connectedBridgeUsers) do
         -- Consider stale after 5 minutes
         if now - info.lastSeen < 300 then
-            -- filterKey is guildName-guildHomeRealm
-            local theirFilterKey = info.guildName
-            if info.guildHomeRealm and info.guildHomeRealm ~= "" then
+            -- filterKey can be guildName-guildClubId or guildName-guildHomeRealm
+            local theirFilterKey
+            if info.guildClubId then
+                theirFilterKey = info.guildName .. "-" .. info.guildClubId
+            elseif info.guildHomeRealm and info.guildHomeRealm ~= "" then
                 theirFilterKey = info.guildName .. "-" .. info.guildHomeRealm
+            else
+                theirFilterKey = info.guildName
             end
             if theirFilterKey == filterKey then
                 return true
@@ -155,4 +159,39 @@ function GB:GetClassColorFromCache(playerName, playerRealm, guildName, classFile
 
     -- Default to green for unknown classes
     return "00FF00"
+end
+
+-- Find all chat frames that have guild chat enabled
+function GB:FindGuildChatFrames()
+    local frames = {}
+    for i = 1, NUM_CHAT_WINDOWS do
+        local chatFrame = _G["ChatFrame" .. i]
+        if chatFrame then
+            -- Check if this frame has guild messages enabled
+            local messageTypes = {GetChatWindowMessages(i)}
+            for _, msgType in ipairs(messageTypes) do
+                if msgType == "GUILD" then
+                    table.insert(frames, chatFrame)
+                    break
+                end
+            end
+        end
+    end
+    self.guildChatFrames = frames
+    return frames
+end
+
+-- Add a message to all chat frames that have guild chat enabled
+function GB:AddMessageToGuildChatFrames(formattedMessage, r, g, b)
+    -- Refresh the list of guild chat frames
+    local frames = self:FindGuildChatFrames()
+
+    if #frames == 0 then
+        -- Fallback to default chat frame if no guild frames found
+        DEFAULT_CHAT_FRAME:AddMessage(formattedMessage, r or 0.25, g or 1.0, b or 0.25)
+    else
+        for _, chatFrame in ipairs(frames) do
+            chatFrame:AddMessage(formattedMessage, r or 0.25, g or 1.0, b or 0.25)
+        end
+    end
 end
