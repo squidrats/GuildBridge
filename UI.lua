@@ -4,28 +4,52 @@
 local addonName, GB = ...
 
 -- UI Constants
-local MIN_WIDTH = 350
-local MIN_HEIGHT = 250
-local DEFAULT_WIDTH = 450
-local DEFAULT_HEIGHT = 350
+local MIN_WIDTH = 380
+local MIN_HEIGHT = 280
+local DEFAULT_WIDTH = 480
+local DEFAULT_HEIGHT = 380
 
--- Modern color scheme
+-- Guild-style color scheme (warmer, easier on eyes)
 local COLORS = {
-    bgDark = { 0.08, 0.08, 0.10, 0.97 },
-    bgMedium = { 0.12, 0.12, 0.14, 0.95 },
-    bgLight = { 0.18, 0.18, 0.20, 0.9 },
-    border = { 0.25, 0.25, 0.28, 1 },
-    borderHighlight = { 0.4, 0.4, 0.45, 1 },
-    accent = { 0.3, 0.7, 0.4, 1 },        -- Green accent
-    accentGold = { 1, 0.82, 0, 1 },       -- Gold for selected
-    textNormal = { 0.85, 0.85, 0.85, 1 },
-    textMuted = { 0.55, 0.55, 0.55, 1 },
+    -- Backgrounds - warm dark tones like native WoW frames
+    bgDark = { 0.05, 0.05, 0.06, 0.92 },
+    bgMedium = { 0.08, 0.08, 0.09, 0.90 },
+    bgLight = { 0.12, 0.12, 0.13, 0.85 },
+    bgChat = { 0.03, 0.03, 0.04, 0.75 },  -- Chat area background
+
+    -- Borders - subtle warm gray
+    border = { 0.20, 0.18, 0.16, 0.8 },
+    borderLight = { 0.30, 0.28, 0.25, 0.6 },
+    borderHighlight = { 0.45, 0.40, 0.35, 1 },
+
+    -- Guild green accent (matches guild chat)
+    guildGreen = { 0.25, 1.0, 0.25, 1 },
+    guildGreenDark = { 0.15, 0.5, 0.15, 1 },
+    guildGreenMuted = { 0.20, 0.45, 0.20, 1 },
+
+    -- Gold for selected items
+    accentGold = { 1, 0.82, 0, 1 },
+    accentGoldDim = { 0.8, 0.65, 0, 0.8 },
+
+    -- Text colors
+    textNormal = { 0.90, 0.88, 0.85, 1 },
+    textMuted = { 0.55, 0.52, 0.48, 1 },
     textHighlight = { 1, 1, 1, 1 },
-    tabSelected = { 0.15, 0.15, 0.20, 1 },
-    tabHover = { 0.20, 0.20, 0.25, 1 },
-    statusGreen = { 0.3, 0.8, 0.3, 1 },
-    statusRed = { 0.8, 0.3, 0.3, 1 },
-    inputBg = { 0.1, 0.1, 0.12, 1 },
+    textGuild = { 0.25, 1.0, 0.25, 1 },   -- Guild chat green
+
+    -- Tab colors
+    tabNormal = { 0.10, 0.10, 0.11, 0.85 },
+    tabSelected = { 0.12, 0.14, 0.12, 0.95 },
+    tabHover = { 0.15, 0.17, 0.15, 0.90 },
+
+    -- Status indicators
+    statusGreen = { 0.2, 0.9, 0.2, 1 },
+    statusRed = { 0.9, 0.25, 0.25, 1 },
+    statusYellow = { 0.9, 0.8, 0.2, 1 },
+
+    -- Input
+    inputBg = { 0.06, 0.06, 0.07, 0.9 },
+    inputBorder = { 0.25, 0.35, 0.25, 0.8 },
 }
 
 -- Forward declarations for local functions
@@ -49,16 +73,17 @@ local forgetAllButton
 updateTabHighlights = function()
     for _, tab in pairs(GB.tabButtons) do
         if tab.filterValue == GB.currentFilter then
-            tab.guildText:SetTextColor(unpack(COLORS.accentGold))
+            -- Selected tab - guild green text with subtle green-tinted background
+            tab.guildText:SetTextColor(unpack(COLORS.guildGreen))
             tab.bg:SetColorTexture(unpack(COLORS.tabSelected))
-            tab.borderTop:SetColorTexture(COLORS.accentGold[1], COLORS.accentGold[2], COLORS.accentGold[3], 0.8)
+            tab.borderTop:SetColorTexture(COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3], 0.9)
             if tab.realmText then
-                tab.realmText:SetTextColor(0.7, 0.7, 0.7)
+                tab.realmText:SetTextColor(0.6, 0.75, 0.6, 1)
             end
             tab.selected = true
         else
             tab.guildText:SetTextColor(unpack(COLORS.textNormal))
-            tab.bg:SetColorTexture(unpack(COLORS.bgMedium))
+            tab.bg:SetColorTexture(unpack(COLORS.tabNormal))
             tab.borderTop:SetColorTexture(0, 0, 0, 0)
             if tab.realmText then
                 tab.realmText:SetTextColor(unpack(COLORS.textMuted))
@@ -412,8 +437,8 @@ end
 
 -- Create a guild filter tab with modern styling
 createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffset, guildName, tabWidth)
-    tabWidth = tabWidth or 76
-    local tabHeight = 32
+    tabWidth = tabWidth or 80
+    local tabHeight = 34
     local tab = CreateFrame("Frame", nil, parent)
     tab:SetSize(tabWidth, tabHeight)
     tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, yOffset)
@@ -422,14 +447,14 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     tab.filterValue = filterValue
     tab.guildName = guildName
 
-    -- Background with subtle gradient effect (simulated with solid color)
+    -- Background
     local bg = tab:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("TOPLEFT", 0, 0)
-    bg:SetPoint("BOTTOMRIGHT", 0, 0)
-    bg:SetColorTexture(unpack(COLORS.bgMedium))
+    bg:SetPoint("TOPLEFT", 1, -1)
+    bg:SetPoint("BOTTOMRIGHT", -1, 1)
+    bg:SetColorTexture(unpack(COLORS.tabNormal))
     tab.bg = bg
 
-    -- Top accent border (shows when selected)
+    -- Top accent border (shows when selected) - guild green
     local borderTop = tab:CreateTexture(nil, "BORDER")
     borderTop:SetPoint("TOPLEFT", 0, 0)
     borderTop:SetPoint("TOPRIGHT", 0, 0)
@@ -437,28 +462,40 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     borderTop:SetColorTexture(0, 0, 0, 0)
     tab.borderTop = borderTop
 
-    -- Bottom border (subtle separator)
+    -- Subtle side borders
+    local borderLeft = tab:CreateTexture(nil, "BORDER")
+    borderLeft:SetPoint("TOPLEFT", 0, 0)
+    borderLeft:SetPoint("BOTTOMLEFT", 0, 0)
+    borderLeft:SetWidth(1)
+    borderLeft:SetColorTexture(unpack(COLORS.borderLight))
+
+    local borderRight = tab:CreateTexture(nil, "BORDER")
+    borderRight:SetPoint("TOPRIGHT", 0, 0)
+    borderRight:SetPoint("BOTTOMRIGHT", 0, 0)
+    borderRight:SetWidth(1)
+    borderRight:SetColorTexture(unpack(COLORS.borderLight))
+
+    -- Bottom border
     local borderBottom = tab:CreateTexture(nil, "BORDER")
     borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
     borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
     borderBottom:SetHeight(1)
-    borderBottom:SetColorTexture(unpack(COLORS.border))
+    borderBottom:SetColorTexture(unpack(COLORS.borderLight))
     tab.borderBottom = borderBottom
 
-    -- Status indicator dot (for guild tabs)
+    -- Status indicator dot (for guild tabs) - larger and more visible
     if guildName then
         tab.statusDot = tab:CreateTexture(nil, "OVERLAY")
         tab.statusDot:SetSize(10, 10)
         tab.statusDot:SetPoint("TOPRIGHT", tab, "TOPRIGHT", -3, -3)
-        -- Make it circular using a simple texture trick
         tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Green")
-        tab.statusDot:SetVertexColor(0.3, 0.8, 0.3, 1)
+        tab.statusDot:SetVertexColor(unpack(COLORS.statusGreen))
     end
 
     -- Guild name text
     tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     if realmLabel and realmLabel ~= "" then
-        tab.guildText:SetPoint("TOP", tab, "TOP", 0, -6)
+        tab.guildText:SetPoint("TOP", tab, "TOP", 0, -7)
     else
         tab.guildText:SetPoint("CENTER", tab, "CENTER", 0, 0)
     end
@@ -468,7 +505,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     -- Realm name text (smaller, muted)
     if realmLabel and realmLabel ~= "" then
         tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
-        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -1)
+        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -2)
         tab.realmText:SetText(realmLabel)
         tab.realmText:SetTextColor(unpack(COLORS.textMuted))
     end
@@ -489,7 +526,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
 
     tab:SetScript("OnEnter", function(self)
         if not self.selected then
-            self.guildText:SetTextColor(unpack(COLORS.textHighlight))
+            self.guildText:SetTextColor(unpack(COLORS.guildGreen))
             self.bg:SetColorTexture(unpack(COLORS.tabHover))
         end
     end)
@@ -497,7 +534,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     tab:SetScript("OnLeave", function(self)
         if not self.selected then
             self.guildText:SetTextColor(unpack(COLORS.textNormal))
-            self.bg:SetColorTexture(unpack(COLORS.bgMedium))
+            self.bg:SetColorTexture(unpack(COLORS.tabNormal))
         end
     end)
 
@@ -508,15 +545,15 @@ end
 updatePageTabSelection = function()
     for i, tab in ipairs(GB.pageTabs) do
         if tab.pageName == GB.currentPage then
-            -- Selected tab
+            -- Selected tab - guild green accent
             tab.bg:SetColorTexture(unpack(COLORS.tabSelected))
-            tab.borderBottom:SetColorTexture(unpack(COLORS.accentGold))
-            tab.text:SetTextColor(unpack(COLORS.accentGold))
+            tab.borderBottom:SetColorTexture(unpack(COLORS.guildGreen))
+            tab.text:SetTextColor(unpack(COLORS.guildGreen))
         else
             -- Unselected tab
             tab.bg:SetColorTexture(unpack(COLORS.bgDark))
-            tab.borderBottom:SetColorTexture(unpack(COLORS.border))
-            tab.text:SetTextColor(unpack(COLORS.textNormal))
+            tab.borderBottom:SetColorTexture(unpack(COLORS.borderLight))
+            tab.text:SetTextColor(unpack(COLORS.textMuted))
         end
     end
 end
@@ -524,7 +561,7 @@ end
 -- Create a styled page tab (Chat/Status)
 createPageTab = function(parent, label, tabIndex, pageName)
     local tab = CreateFrame("Button", "GuildBridgePageTab" .. tabIndex, parent)
-    tab:SetSize(70, 26)
+    tab:SetSize(65, 24)
     tab:SetID(tabIndex)
     tab.pageName = pageName
 
@@ -538,13 +575,13 @@ createPageTab = function(parent, label, tabIndex, pageName)
     tab.borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
     tab.borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
     tab.borderBottom:SetHeight(2)
-    tab.borderBottom:SetColorTexture(unpack(COLORS.border))
+    tab.borderBottom:SetColorTexture(unpack(COLORS.borderLight))
 
     -- Text
-    tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     tab.text:SetPoint("CENTER", 0, 1)
     tab.text:SetText(label)
-    tab.text:SetTextColor(unpack(COLORS.textNormal))
+    tab.text:SetTextColor(unpack(COLORS.textMuted))
 
     tab:SetScript("OnClick", function(self)
         PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
@@ -555,14 +592,14 @@ createPageTab = function(parent, label, tabIndex, pageName)
     tab:SetScript("OnEnter", function(self)
         if GB.currentPage ~= self.pageName then
             self.bg:SetColorTexture(unpack(COLORS.tabHover))
-            self.text:SetTextColor(unpack(COLORS.textHighlight))
+            self.text:SetTextColor(unpack(COLORS.guildGreen))
         end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if GB.currentPage ~= self.pageName then
             self.bg:SetColorTexture(unpack(COLORS.bgDark))
-            self.text:SetTextColor(unpack(COLORS.textNormal))
+            self.text:SetTextColor(unpack(COLORS.textMuted))
         end
     end)
 
@@ -582,11 +619,11 @@ local function createPageTabs()
 
     -- Create Chat tab at top left (below title bar)
     GB.pageTabs[1] = createPageTab(GB.mainFrame, "Chat", 1, "chat")
-    GB.pageTabs[1]:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 10, -24)
+    GB.pageTabs[1]:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 8, -28)
 
     -- Create Status tab next to Chat
     GB.pageTabs[2] = createPageTab(GB.mainFrame, "Status", 2, "status")
-    GB.pageTabs[2]:SetPoint("LEFT", GB.pageTabs[1], "RIGHT", 4, 0)
+    GB.pageTabs[2]:SetPoint("LEFT", GB.pageTabs[1], "RIGHT", 2, 0)
 
     updatePageTabSelection()
 end
@@ -611,14 +648,14 @@ updatePageVisibility = function()
 
     -- Adjust scroll frame position
     if GB.scrollFrame then
-        local titleBarHeight = 28
-        local pageTabHeight = 30
+        local titleBarHeight = 26
+        local pageTabHeight = 28
         if GB.currentPage == "chat" then
             -- Calculate guild tab rows
-            local tabWidth = 76
-            local tabSpacing = 4
-            local rowHeight = 36
-            local maxWidth = GB.mainFrame:GetWidth() - 20
+            local tabWidth = 80
+            local tabSpacing = 3
+            local rowHeight = 38
+            local maxWidth = GB.mainFrame:GetWidth() - 16
             -- Count: "All" tab + all known guilds
             local guildCount = 1
             for _ in pairs(GB.knownGuilds) do
@@ -627,12 +664,12 @@ updatePageVisibility = function()
             local tabsPerRow = math.max(1, math.floor(maxWidth / (tabWidth + tabSpacing)))
             local numRows = math.ceil(guildCount / tabsPerRow)
             if numRows < 1 then numRows = 1 end
-            local scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 4
-            GB.scrollFrame:SetPoint("TOPLEFT", 12, -scrollTopOffset)
+            local scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 6
+            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
         else
             -- Status page - just page tabs, no guild filter tabs
-            local scrollTopOffset = titleBarHeight + pageTabHeight + 4
-            GB.scrollFrame:SetPoint("TOPLEFT", 12, -scrollTopOffset)
+            local scrollTopOffset = titleBarHeight + pageTabHeight + 6
+            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
         end
     end
 
@@ -649,11 +686,11 @@ function GB:RebuildTabs()
     end
     self.tabButtons = {}
 
-    local tabSpacing = 4
-    local tabWidth = 76
-    local rowHeight = 36
-    local titleBarHeight = 28
-    local pageTabHeight = 30
+    local tabSpacing = 3
+    local tabWidth = 80
+    local rowHeight = 38
+    local titleBarHeight = 26
+    local pageTabHeight = 28
     local topRowY = -(titleBarHeight + pageTabHeight)  -- Below title bar and page tabs
 
     -- Guild filter tabs (only visible on chat page)
@@ -739,19 +776,19 @@ function GB:CreateBridgeUI()
         return
     end
 
-    -- Main frame with custom backdrop instead of BasicFrameTemplate
+    -- Main frame with custom backdrop
     self.mainFrame = CreateFrame("Frame", "GuildBridgeFrame", UIParent, "BackdropTemplate")
     self.mainFrame:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     self.mainFrame:SetPoint("CENTER")
     self.mainFrame:SetMovable(true)
     self.mainFrame:SetResizable(true)
-    self.mainFrame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, 800, 600)
+    self.mainFrame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, 900, 700)
     self.mainFrame:EnableMouse(true)
     self.mainFrame:SetClampedToScreen(true)
     self.mainFrame:SetFrameStrata("MEDIUM")
     self.mainFrame:SetFrameLevel(100)
 
-    -- Modern dark backdrop
+    -- Dark backdrop with subtle border
     self.mainFrame:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
@@ -761,20 +798,20 @@ function GB:CreateBridgeUI()
     self.mainFrame:SetBackdropColor(unpack(COLORS.bgDark))
     self.mainFrame:SetBackdropBorderColor(unpack(COLORS.border))
 
-    -- Title bar background
+    -- Title bar background - subtle gradient feel
     local titleBar = self.mainFrame:CreateTexture(nil, "ARTWORK")
-    titleBar:SetPoint("TOPLEFT", 0, 0)
-    titleBar:SetPoint("TOPRIGHT", 0, 0)
-    titleBar:SetHeight(28)
+    titleBar:SetPoint("TOPLEFT", 1, -1)
+    titleBar:SetPoint("TOPRIGHT", -1, -1)
+    titleBar:SetHeight(26)
     titleBar:SetColorTexture(unpack(COLORS.bgMedium))
     self.mainFrame.titleBar = titleBar
 
-    -- Title bar bottom border
+    -- Title bar bottom border - guild green accent
     local titleBorder = self.mainFrame:CreateTexture(nil, "ARTWORK")
     titleBorder:SetPoint("TOPLEFT", titleBar, "BOTTOMLEFT", 0, 0)
     titleBorder:SetPoint("TOPRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
     titleBorder:SetHeight(1)
-    titleBorder:SetColorTexture(unpack(COLORS.border))
+    titleBorder:SetColorTexture(COLORS.guildGreenDark[1], COLORS.guildGreenDark[2], COLORS.guildGreenDark[3], 0.5)
 
     -- Make title bar draggable
     self.mainFrame:RegisterForDrag("LeftButton")
@@ -786,27 +823,37 @@ function GB:CreateBridgeUI()
         GB:SaveWindowPosition()
     end)
 
-    -- Title text
-    self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    self.mainFrame.title:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
-    self.mainFrame.title:SetText("Guild Bridge")
-    self.mainFrame.title:SetTextColor(unpack(COLORS.textHighlight))
+    -- Guild icon (small green square)
+    local guildIcon = self.mainFrame:CreateTexture(nil, "OVERLAY")
+    guildIcon:SetSize(14, 14)
+    guildIcon:SetPoint("LEFT", titleBar, "LEFT", 10, 0)
+    guildIcon:SetColorTexture(unpack(COLORS.guildGreen))
+    guildIcon:SetAlpha(0.8)
 
-    -- Close button (custom styled)
+    -- Title text - guild green
+    self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    self.mainFrame.title:SetPoint("LEFT", guildIcon, "RIGHT", 8, 0)
+    self.mainFrame.title:SetText("Guild Bridge")
+    self.mainFrame.title:SetTextColor(unpack(COLORS.guildGreen))
+
+    -- Close button (X styled)
     local closeBtn = CreateFrame("Button", nil, self.mainFrame)
-    closeBtn:SetSize(20, 20)
-    closeBtn:SetPoint("TOPRIGHT", -6, -4)
-    closeBtn:SetNormalTexture("Interface\\Buttons\\UI-StopButton")
-    closeBtn:SetHighlightTexture("Interface\\Buttons\\UI-StopButton")
-    closeBtn:GetHighlightTexture():SetVertexColor(1, 0.3, 0.3, 0.8)
+    closeBtn:SetSize(18, 18)
+    closeBtn:SetPoint("TOPRIGHT", -6, -5)
+
+    closeBtn.text = closeBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    closeBtn.text:SetPoint("CENTER", 0, 0)
+    closeBtn.text:SetText("X")
+    closeBtn.text:SetTextColor(unpack(COLORS.textMuted))
+
     closeBtn:SetScript("OnClick", function()
         GB.mainFrame:Hide()
     end)
     closeBtn:SetScript("OnEnter", function(self)
-        self:GetNormalTexture():SetVertexColor(1, 0.5, 0.5)
+        self.text:SetTextColor(1, 0.4, 0.4)
     end)
     closeBtn:SetScript("OnLeave", function(self)
-        self:GetNormalTexture():SetVertexColor(1, 1, 1)
+        self.text:SetTextColor(unpack(COLORS.textMuted))
     end)
 
     -- Resize grip (bottom-right corner)
@@ -816,6 +863,7 @@ function GB:CreateBridgeUI()
     resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
     resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeGrip:GetNormalTexture():SetVertexColor(0.5, 0.5, 0.5, 0.6)
     resizeGrip:SetScript("OnMouseDown", function()
         GB.mainFrame:StartSizing("BOTTOMRIGHT")
     end)
@@ -830,7 +878,7 @@ function GB:CreateBridgeUI()
     self.mainFrame:SetScript("OnSizeChanged", function(frame, width, height)
         -- Update scroll frame bottom anchor
         if GB.scrollFrame then
-            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -12, 42)
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
         end
     end)
 
@@ -840,10 +888,10 @@ function GB:CreateBridgeUI()
     -- Build guild filter tabs
     self:RebuildTabs()
 
-    -- Options row (mute checkbox, filter checkbox) - moved to be more subtle
+    -- Mute checkbox - subtle, in corner
     self.muteCheckbox = CreateFrame("CheckButton", nil, self.mainFrame, "UICheckButtonTemplate")
-    self.muteCheckbox:SetSize(20, 20)
-    self.muteCheckbox:SetPoint("TOPRIGHT", self.mainFrame, "TOPRIGHT", -30, -5)
+    self.muteCheckbox:SetSize(18, 18)
+    self.muteCheckbox:SetPoint("TOPRIGHT", self.mainFrame, "TOPRIGHT", -26, -5)
     self.muteCheckbox.text = self.muteCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
     self.muteCheckbox.text:SetPoint("RIGHT", self.muteCheckbox, "LEFT", -2, 0)
     self.muteCheckbox.text:SetText("Mute")
@@ -861,22 +909,23 @@ function GB:CreateBridgeUI()
         GameTooltip:Hide()
     end)
 
-    -- Scroll frame for messages with modern styling
+    -- Scroll frame for messages - chat area
     self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
-    self.scrollFrame:SetPoint("TOPLEFT", 12, -94)
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", -12, 42)
-    self.scrollFrame:SetFontObject(GameFontHighlightSmall)
+    self.scrollFrame:SetPoint("TOPLEFT", 10, -94)
+    self.scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
+    self.scrollFrame:SetFontObject(ChatFontNormal)
     self.scrollFrame:SetJustifyH("LEFT")
     self.scrollFrame:SetFading(false)
     self.scrollFrame:SetMaxLines(500)
     self.scrollFrame:EnableMouseWheel(true)
     self.scrollFrame:SetHyperlinksEnabled(true)
     self.scrollFrame:SetIndentedWordWrap(true)
+    self.scrollFrame:SetSpacing(2)  -- Line spacing for readability
 
-    -- Scroll frame background (subtle)
+    -- Chat area background - very subtle
     local scrollBg = self.scrollFrame:CreateTexture(nil, "BACKGROUND")
     scrollBg:SetAllPoints()
-    scrollBg:SetColorTexture(0, 0, 0, 0.2)
+    scrollBg:SetColorTexture(unpack(COLORS.bgChat))
 
     self.scrollFrame:SetScript("OnMouseWheel", function(frame, delta)
         if delta > 0 then
@@ -889,23 +938,23 @@ function GB:CreateBridgeUI()
         SetItemRef(link, text, button)
     end)
 
-    -- Input box with modern styling
+    -- Input box container with guild-style border
     local inputBg = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
-    inputBg:SetPoint("BOTTOMLEFT", 10, 8)
-    inputBg:SetPoint("BOTTOMRIGHT", -10, 8)
-    inputBg:SetHeight(26)
+    inputBg:SetPoint("BOTTOMLEFT", 8, 6)
+    inputBg:SetPoint("BOTTOMRIGHT", -8, 6)
+    inputBg:SetHeight(28)
     inputBg:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
         edgeFile = "Interface\\Buttons\\WHITE8x8",
         edgeSize = 1,
     })
     inputBg:SetBackdropColor(unpack(COLORS.inputBg))
-    inputBg:SetBackdropBorderColor(unpack(COLORS.border))
+    inputBg:SetBackdropBorderColor(unpack(COLORS.inputBorder))
     self.mainFrame.inputBg = inputBg
 
     self.inputBox = CreateFrame("EditBox", nil, inputBg)
-    self.inputBox:SetPoint("TOPLEFT", 8, -4)
-    self.inputBox:SetPoint("BOTTOMRIGHT", -8, 4)
+    self.inputBox:SetPoint("TOPLEFT", 10, -6)
+    self.inputBox:SetPoint("BOTTOMRIGHT", -10, 6)
     self.inputBox:SetAutoFocus(false)
     self.inputBox:SetFontObject(ChatFontNormal)
     self.inputBox:SetTextColor(unpack(COLORS.textNormal))
@@ -922,12 +971,12 @@ function GB:CreateBridgeUI()
         inputBox:ClearFocus()
     end)
 
-    -- Focus highlight for input
+    -- Focus highlight - guild green
     self.inputBox:SetScript("OnEditFocusGained", function()
-        inputBg:SetBackdropBorderColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.8)
+        inputBg:SetBackdropBorderColor(COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3], 0.7)
     end)
     self.inputBox:SetScript("OnEditFocusLost", function()
-        inputBg:SetBackdropBorderColor(unpack(COLORS.border))
+        inputBg:SetBackdropBorderColor(unpack(COLORS.inputBorder))
     end)
 
     -- Restore saved position and size

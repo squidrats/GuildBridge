@@ -55,8 +55,27 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     -- Use guildClubId or guildHomeRealm as the unique key to distinguish same-name guilds
     local filterKey = self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
 
-    -- If this is a UI message targeted to another guild, display under that tab instead
-    local displayFilterKey = displayInTargetTab or filterKey
+    -- If this is a UI message targeted to another guild, we need to find the LOCAL filterKey
+    -- for that guild (the sender's filterKey may use a different clubId than we have locally)
+    local displayFilterKey = filterKey
+    if displayInTargetTab then
+        -- Try to find a matching guild in our known guilds by parsing the target
+        -- Format is "GuildName-ClubId" or "GuildName-HomeRealm"
+        local targetGuildName = displayInTargetTab:match("^(.+)%-[^%-]+$")
+        if targetGuildName then
+            -- Look for this guild in our known guilds
+            for localFilterKey, info in pairs(self.knownGuilds) do
+                if info.guildName == targetGuildName then
+                    displayFilterKey = localFilterKey
+                    break
+                end
+            end
+        end
+        -- If no match found, use the target as-is (might still work if filterKeys happen to match)
+        if displayFilterKey == filterKey and displayInTargetTab ~= filterKey then
+            displayFilterKey = displayInTargetTab
+        end
+    end
 
     -- Build guild tag based on guild number and ElvUI presence
     -- Use green color (|cff40FF40) to match native guild chat
