@@ -13,6 +13,7 @@ GB.eventFrame:RegisterEvent("CHAT_MSG_ADDON")  -- For whisper-based addon messag
 GB.eventFrame:RegisterEvent("BN_FRIEND_INFO_CHANGED")
 GB.eventFrame:RegisterEvent("BN_CONNECTED")
 GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
+GB.eventFrame:RegisterEvent("PLAYER_LOGOUT")
 
 -- Track if we've done initial handshake
 local initialHandshakeDone = false
@@ -53,6 +54,18 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- This fires after login and after every loading screen
         -- Good time to refresh friends and send handshake
         GB:UpdateOnlineFriends()
+
+        -- Register own guild on login/reload so it appears in the tab list immediately
+        C_Timer.After(1, function()
+            if IsInGuild() then
+                local myGuildName = GetGuildInfo("player")
+                local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+                local myGuildHomeRealm = GB:GetGuildHomeRealm()
+                if myGuildName and GB.allowedGuilds[myGuildName] and myGuildClubId then
+                    GB:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
+                end
+            end
+        end)
 
         if not initialHandshakeDone then
             initialHandshakeDone = true
@@ -138,5 +151,11 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         if prefix == GB.BRIDGE_ADDON_PREFIX and channel == "WHISPER" then
             GB:HandleWhisperAddonMessage(prefix, message, sender)
         end
+
+    elseif event == "PLAYER_LOGOUT" then
+        -- Send LEAVE notification to all connected peers before logging out
+        -- This ensures they know we're disconnecting
+        GB:SendLeaveNotification()
+        GB:SendWhisperLeaveNotification()
     end
 end)

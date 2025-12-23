@@ -12,7 +12,7 @@ local function getGuildClubId()
 end
 
 -- Register a guild (for tracking discovered guilds)
--- guildClubId is the preferred unique identifier, falls back to guildHomeRealm
+-- guildClubId is REQUIRED for registration to prevent duplicate entries
 function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
     if not guildName then return nil end
 
@@ -20,11 +20,10 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
     if guildClubId == "" then guildClubId = nil end
     if guildHomeRealm == "" then guildHomeRealm = nil end
 
-    -- Use clubId if available, otherwise fall back to homeRealm
-    local uniqueId = guildClubId or guildHomeRealm
-    if not uniqueId then return nil end
+    -- Require clubId for registration - this ensures unique guild identification
+    if not guildClubId then return nil end
 
-    local filterKey = guildName .. "-" .. uniqueId
+    local filterKey = guildName .. "-" .. guildClubId
 
     if not self.knownGuilds[filterKey] then
         self.knownGuilds[filterKey] = {
@@ -118,11 +117,34 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
         self.scrollFrame:AddMessage(displayMsg)
     end
 
-    -- Only show in native chat if filter is off, or if message matches the current filter
-    -- Native chat always shows the full format with guild tag
-    -- Only show in native chat if the message is from a guild the player is actually in
+    -- Show in native chat based on message type:
+    -- - Regular guild messages (no target): Show for ALL players in any allowed guild
+    -- - UI messages targeted to a specific guild: Show ONLY for players in that targeted guild
     local myGuildName = GetGuildInfo("player")
-    if myGuildName and guildName == myGuildName then
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myGuildHomeRealm = self:GetGuildHomeRealm()
+
+    -- Build my guild's filterKey
+    local myFilterKey = nil
+    if myGuildName then
+        if myGuildClubId then
+            myFilterKey = myGuildName .. "-" .. myGuildClubId
+        elseif myGuildHomeRealm then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
+    end
+
+    -- Determine if we should show in native chat
+    local showInNativeChat = false
+    if displayInTargetTab then
+        -- UI message targeted to a specific guild - only show for players in that guild
+        showInNativeChat = myFilterKey and displayInTargetTab == myFilterKey
+    else
+        -- Regular guild message (no target) - show for all players in allowed guilds
+        showInNativeChat = myGuildName and self.allowedGuilds[myGuildName]
+    end
+
+    if showInNativeChat then
         if not GuildBridgeDB.filterNativeChat or self.currentFilter == nil or displayFilterKey == self.currentFilter then
             self:AddMessageToGuildChatFrames(formattedWithTag, 0.25, 1.0, 0.25)
         end
@@ -338,9 +360,10 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
 
     -- Get guild home realm (GM's realm) for proper identification
     local myGuildHomeRealm = self:GetGuildHomeRealm() or originRealm
+    local myGuildClubId = getGuildClubId()
 
-    -- Use guildName-guildHomeRealm as filter key
-    local filterKey = self:RegisterGuild(myGuildName, myGuildHomeRealm)
+    -- Use guildName-guildClubId as filter key (clubId is required for registration)
+    local filterKey = self:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
 
     local short = self.guildShortNames[myGuildName] or myGuildName or ""
     -- Get the manually set realm for display, or use guildHomeRealm

@@ -17,6 +17,8 @@ local contextMenu
 local forgetButton
 local setRealmButton
 local realmInputDialog
+local allTabContextMenu
+local forgetAllButton
 
 -- Update tab highlights based on current filter
 updateTabHighlights = function()
@@ -45,9 +47,27 @@ end
 
 -- Update connection status indicators on guild tabs
 function GB:UpdateConnectionIndicators()
+    -- Get my guild's filterKey to check if a tab is my own guild
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myGuildHomeRealm = self:GetGuildHomeRealm()
+    local myFilterKey = nil
+    if myGuildName then
+        if myGuildClubId then
+            myFilterKey = myGuildName .. "-" .. myGuildClubId
+        elseif myGuildHomeRealm then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
+    end
+
     for _, tab in pairs(self.tabButtons) do
         if tab.statusDot and tab.guildName then
-            if self:HasConnectedUserInGuild(tab.filterValue) then
+            -- If this tab is my own guild, always show green (I'm always connected to my own guild)
+            -- Check both filterKey match AND guildName match (in case filterKey formats differ)
+            local isMyGuild = (tab.filterValue == myFilterKey) or (myGuildName and tab.guildName == myGuildName)
+            if isMyGuild then
+                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
+            elseif self:HasConnectedUserInGuild(tab.filterValue) then
                 -- Has a bridge user connected in this guild - green
                 tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
             else
@@ -71,22 +91,18 @@ local function forgetGuild(filterKey)
 end
 
 -- Set guild realm display name
-local function setGuildRealm(guildName, newRealm)
-    -- Find and update the guild entry
-    for filterKey, info in pairs(GB.knownGuilds) do
-        if info.guildName == guildName then
-            -- Update the realm
-            info.realmName = newRealm
-            info.manualRealm = true  -- Mark as manually set
-            GuildBridgeDB.knownGuilds = GB.knownGuilds
-            GB:RebuildTabs()
-            return
-        end
+local function setGuildRealm(filterKey, newRealm)
+    -- Update the specific guild entry by filterKey
+    if filterKey and GB.knownGuilds[filterKey] then
+        GB.knownGuilds[filterKey].realmName = newRealm
+        GB.knownGuilds[filterKey].manualRealm = true  -- Mark as manually set
+        GuildBridgeDB.knownGuilds = GB.knownGuilds
+        GB:RebuildTabs()
     end
 end
 
 -- Show realm input dialog
-showRealmInputDialog = function(guildName)
+showRealmInputDialog = function(filterKey, guildName)
     if not realmInputDialog then
         realmInputDialog = CreateFrame("Frame", "GuildBridgeRealmDialog", UIParent, "BackdropTemplate")
         realmInputDialog:SetSize(220, 90)
@@ -141,7 +157,7 @@ showRealmInputDialog = function(guildName)
     realmInputDialog.editBox:SetScript("OnEnterPressed", function(self)
         local realm = self:GetText()
         if realm and realm ~= "" then
-            setGuildRealm(realmInputDialog.guildName, realm)
+            setGuildRealm(realmInputDialog.filterKey, realm)
         end
         realmInputDialog:Hide()
     end)
@@ -149,12 +165,12 @@ showRealmInputDialog = function(guildName)
     realmInputDialog.okButton:SetScript("OnClick", function()
         local realm = realmInputDialog.editBox:GetText()
         if realm and realm ~= "" then
-            setGuildRealm(realmInputDialog.guildName, realm)
+            setGuildRealm(realmInputDialog.filterKey, realm)
         end
         realmInputDialog:Hide()
     end)
 
-    realmInputDialog.guildName = guildName
+    realmInputDialog.filterKey = filterKey
     realmInputDialog:Show()
     realmInputDialog.editBox:SetFocus()
 end
@@ -245,7 +261,7 @@ showContextMenu = function(filterKey, guildLabel, guildName)
     ensureContextMenu()
     setRealmButton:SetScript("OnClick", function()
         contextMenu:Hide()
-        showRealmInputDialog(guildName)
+        showRealmInputDialog(filterKey, guildName)
     end)
     forgetButton.text:SetText("Forget " .. guildLabel)
     forgetButton:SetScript("OnClick", function()
@@ -257,6 +273,115 @@ showContextMenu = function(filterKey, guildLabel, guildName)
     contextMenu:ClearAllPoints()
     contextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
     contextMenu:Show()
+end
+
+-- Forget all guilds (except own guild)
+local function forgetAllGuilds()
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myGuildHomeRealm = GB:GetGuildHomeRealm()
+    local myFilterKey = nil
+    if myGuildName then
+        if myGuildClubId then
+            myFilterKey = myGuildName .. "-" .. myGuildClubId
+        elseif myGuildHomeRealm then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
+    end
+
+    -- Clear all guilds except own guild
+    for filterKey, _ in pairs(GB.knownGuilds) do
+        if filterKey ~= myFilterKey then
+            GB.knownGuilds[filterKey] = nil
+        end
+    end
+    GuildBridgeDB.knownGuilds = GB.knownGuilds
+
+    -- Reset filter if needed
+    GB.currentFilter = nil
+    GB:RebuildTabs()
+    GB:RefreshMessages()
+end
+
+-- Ensure All tab context menu is created
+local function ensureAllTabContextMenu()
+    if allTabContextMenu then return end
+
+    allTabContextMenu = CreateFrame("Frame", "GuildBridgeAllTabContextMenu", UIParent, "BackdropTemplate")
+    allTabContextMenu:SetSize(120, 50)
+    allTabContextMenu:SetFrameStrata("DIALOG")
+    allTabContextMenu:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    allTabContextMenu:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+    allTabContextMenu:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+    allTabContextMenu:Hide()
+
+    forgetAllButton = CreateFrame("Button", nil, allTabContextMenu)
+    forgetAllButton:SetSize(110, 20)
+    forgetAllButton:SetPoint("TOP", allTabContextMenu, "TOP", 0, -8)
+    forgetAllButton.text = forgetAllButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    forgetAllButton.text:SetPoint("CENTER")
+    forgetAllButton.text:SetText("Forget All Guilds")
+    forgetAllButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    forgetAllButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(1, 0.82, 0)
+    end)
+    forgetAllButton.text:SetTextColor(1, 0.82, 0)
+    forgetAllButton:SetScript("OnClick", function()
+        forgetAllGuilds()
+        allTabContextMenu:Hide()
+    end)
+
+    local cancelButton = CreateFrame("Button", nil, allTabContextMenu)
+    cancelButton:SetSize(110, 20)
+    cancelButton:SetPoint("TOP", forgetAllButton, "BOTTOM", 0, -2)
+    cancelButton.text = cancelButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cancelButton.text:SetPoint("CENTER")
+    cancelButton.text:SetText("Cancel")
+    cancelButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    cancelButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(0.7, 0.7, 0.7)
+    end)
+    cancelButton.text:SetTextColor(0.7, 0.7, 0.7)
+    cancelButton:SetScript("OnClick", function()
+        allTabContextMenu:Hide()
+    end)
+
+    allTabContextMenu:SetScript("OnShow", function(self)
+        self:SetPropagateKeyboardInput(true)
+    end)
+    allTabContextMenu:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then
+            self:SetPropagateKeyboardInput(false)
+            self:Hide()
+        end
+    end)
+    allTabContextMenu:SetScript("OnEvent", function(self, event)
+        if event == "GLOBAL_MOUSE_DOWN" then
+            if not MouseIsOver(self) then
+                self:Hide()
+            end
+        end
+    end)
+    allTabContextMenu:RegisterEvent("GLOBAL_MOUSE_DOWN")
+end
+
+-- Show context menu for All tab
+local function showAllTabContextMenu()
+    ensureAllTabContextMenu()
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    allTabContextMenu:ClearAllPoints()
+    allTabContextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+    allTabContextMenu:Show()
 end
 
 -- Create a guild filter tab
@@ -303,8 +428,13 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     end
 
     tab:SetScript("OnMouseDown", function(self, button)
-        if button == "RightButton" and filterValue and guildName then
-            showContextMenu(filterValue, guildLabel, guildName)
+        if button == "RightButton" then
+            if filterValue and guildName then
+                showContextMenu(filterValue, guildLabel, guildName)
+            elseif not filterValue and guildLabel == "All" then
+                -- Right-click on All tab
+                showAllTabContextMenu()
+            end
         elseif button == "LeftButton" then
             GB.currentFilter = filterValue
             updateTabHighlights()
@@ -443,23 +573,10 @@ updatePageVisibility = function()
             local tabSpacing = 4
             local rowHeight = 38
             local maxWidth = GB.mainFrame:GetWidth() - 16
+            -- Count: "All" tab + all known guilds (including own guild now)
             local guildCount = 1  -- Start with 1 for "All" tab
-            local myGuildName = GetGuildInfo("player")
-            -- Get my guild's filterKey to exclude it properly
-            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-            local myGuildHomeRealm = GB:GetGuildHomeRealm()
-            local myFilterKey = nil
-            if myGuildName then
-                if myGuildClubId then
-                    myFilterKey = myGuildName .. "-" .. myGuildClubId
-                elseif myGuildHomeRealm then
-                    myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
-                end
-            end
-            for filterKey, info in pairs(GB.knownGuilds) do
-                if filterKey ~= myFilterKey then
-                    guildCount = guildCount + 1
-                end
+            for _ in pairs(GB.knownGuilds) do
+                guildCount = guildCount + 1
             end
             local tabsPerRow = math.floor(maxWidth / (tabWidth + tabSpacing))
             local numRows = math.ceil(guildCount / tabsPerRow)
@@ -504,7 +621,7 @@ function GB:RebuildTabs()
     self.tabButtons.all = createTab(self.mainFrame, "All", nil, nil, xOffset, yOffset, nil, tabWidth)
     xOffset = xOffset + tabWidth + tabSpacing
 
-    -- Get my guild's filterKey to exclude it (not just guild name, since same-name guilds can exist)
+    -- Get my guild's filterKey
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     local myGuildHomeRealm = self:GetGuildHomeRealm()
     local myFilterKey = nil
@@ -516,8 +633,24 @@ function GB:RebuildTabs()
         end
     end
 
+    -- Show my own guild first (right after "All" tab)
+    if myFilterKey and self.knownGuilds[myFilterKey] then
+        local info = self.knownGuilds[myFilterKey]
+        local short = self.guildShortNames[info.guildName] or info.guildName or "?"
+        local realmLabel = nil
+        if info.manualRealm and info.realmName then
+            realmLabel = info.realmName
+        elseif info.guildHomeRealm then
+            realmLabel = info.guildHomeRealm
+        end
+        self.tabButtons["guild" .. tabIndex] = createTab(self.mainFrame, short, realmLabel, myFilterKey, xOffset, yOffset, info.guildName, tabWidth)
+        xOffset = xOffset + tabWidth + tabSpacing
+        tabIndex = tabIndex + 1
+    end
+
+    -- Then show other guilds
     for filterKey, info in pairs(self.knownGuilds) do
-        -- Skip my own guild (by filterKey, not just name - same-name guilds on different servers are different)
+        -- Skip my own guild (already shown first)
         if filterKey ~= myFilterKey then
             -- Check if we need to wrap to next row
             if xOffset + tabWidth > maxWidth then
