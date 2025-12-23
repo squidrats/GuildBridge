@@ -3,6 +3,32 @@
 
 local addonName, GB = ...
 
+-- Hook into chat frame hyperlink handling for guild channel right-click menu
+-- This allows right-clicking on [G] or [Guild] to show the channel menu
+local function SetupGuildLinkHook()
+    -- Hook SetItemRef to handle our custom guildbridge channel links
+    local originalSetItemRef = SetItemRef
+    SetItemRef = function(link, text, button, chatFrame)
+        if link and link:match("^channel:GUILDBRIDGE") then
+            if button == "RightButton" then
+                -- Show the chat channel menu for guild
+                -- This mimics what happens when you right-click on [Guild] in native chat
+                -- Use the native guild channel hyperlink to trigger WoW's built-in menu
+                return originalSetItemRef("channel:GUILD", text, button, chatFrame)
+            elseif button == "LeftButton" then
+                -- Left-click sets chat to guild (same as clicking native [Guild])
+                ChatFrame_OpenChat("/g ", chatFrame)
+                return
+            end
+            return
+        end
+        return originalSetItemRef(link, text, button, chatFrame)
+    end
+end
+
+-- Initialize the hook when module loads
+SetupGuildLinkHook()
+
 -- Get guild club ID for unique identification
 local function getGuildClubId()
     if C_Club and C_Club.GetGuildClubId then
@@ -79,21 +105,22 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
 
     -- Build guild tag based on guild number and ElvUI presence
     -- Use green color (|cff40FF40) to match native guild chat
+    -- Wrap in channel:GUILDBRIDGE hyperlink for right-click menu functionality
     local guildNum = self:GetGuildNumber(guildName, guildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G" .. guildNum .. "]|r|h "
         else
-            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild-" .. guildNum .. "]|r|h "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G]|r|h "
         else
-            guildTag = "|cff40FF40[Guild]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild]|r|h "
         end
     end
 
@@ -342,21 +369,22 @@ function GB:SendFromUI(messageText)
 
     -- Build guild tag based on guild number and ElvUI presence
     -- Use green color (|cff40FF40) to match native guild chat
+    -- Wrap in channel:GUILDBRIDGE hyperlink for right-click menu functionality
     local guildNum = self:GetGuildNumber(playerGuildName, playerGuildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G" .. guildNum .. "]|r|h "
         else
-            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild-" .. guildNum .. "]|r|h "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G]|r|h "
         else
-            guildTag = "|cff40FF40[Guild]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild]|r|h "
         end
     end
 
@@ -441,21 +469,22 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
 
     -- Build guild tag based on guild number and ElvUI presence
     -- Use green color (|cff40FF40) to match native guild chat
+    -- Wrap in channel:GUILDBRIDGE hyperlink for right-click menu functionality
     local guildNum = self:GetGuildNumber(myGuildName, myGuildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G" .. guildNum .. "]|r|h "
         else
-            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild-" .. guildNum .. "]|r|h "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "|cff40FF40[G]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[G]|r|h "
         else
-            guildTag = "|cff40FF40[Guild]|r "
+            guildTag = "|Hchannel:GUILDBRIDGE|h|cff40FF40[Guild]|r|h "
         end
     end
 
