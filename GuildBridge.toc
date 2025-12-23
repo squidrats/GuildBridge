@@ -1,8 +1,23 @@
-## Interface: 100207
+## Interface: 110002
 ## Title: Guild Bridge
 ## Notes: Cross-faction guild bridge via community
 ## Author: You
-## Version: 1.0
+## Version: 1.1
 ## SavedVariables: GuildBridgeDB
 
-GuildBridge.lua
+# Core module - must load first (namespace and shared state)
+Core.lua
+
+# Utility functions
+Utils.lua
+
+# Feature modules
+Handshake.lua
+Messages.lua
+
+# UI components
+UI.lua
+
+# Event handling and slash commands
+Events.lua
+Commands.lua
