@@ -541,45 +541,36 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     return tab
 end
 
--- Update page tab selection (Chat vs Status)
+-- Update page tab selection (Chat vs Status) - segmented control style
 updatePageTabSelection = function()
     for i, tab in ipairs(GB.pageTabs) do
         if tab.pageName == GB.currentPage then
-            -- Selected tab - guild green accent
-            tab.bg:SetColorTexture(unpack(COLORS.tabSelected))
-            tab.borderBottom:SetColorTexture(unpack(COLORS.guildGreen))
-            tab.text:SetTextColor(unpack(COLORS.guildGreen))
+            -- Selected segment - filled with guild green
+            tab.bg:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.9)
+            tab.text:SetTextColor(1, 1, 1, 1)
         else
-            -- Unselected tab
-            tab.bg:SetColorTexture(unpack(COLORS.bgDark))
-            tab.borderBottom:SetColorTexture(unpack(COLORS.borderLight))
+            -- Unselected segment - transparent with muted text
+            tab.bg:SetColorTexture(0, 0, 0, 0.3)
             tab.text:SetTextColor(unpack(COLORS.textMuted))
         end
     end
 end
 
--- Create a styled page tab (Chat/Status)
-createPageTab = function(parent, label, tabIndex, pageName)
+-- Create a styled page tab (Chat/Status) - segmented control style
+createPageTab = function(parent, label, tabIndex, pageName, isFirst, isLast)
     local tab = CreateFrame("Button", "GuildBridgePageTab" .. tabIndex, parent)
-    tab:SetSize(65, 24)
+    tab:SetSize(55, 22)
     tab:SetID(tabIndex)
     tab.pageName = pageName
 
-    -- Background
+    -- Background (will be colored based on selection)
     tab.bg = tab:CreateTexture(nil, "BACKGROUND")
     tab.bg:SetAllPoints()
-    tab.bg:SetColorTexture(unpack(COLORS.bgDark))
-
-    -- Bottom accent border
-    tab.borderBottom = tab:CreateTexture(nil, "BORDER")
-    tab.borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
-    tab.borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
-    tab.borderBottom:SetHeight(2)
-    tab.borderBottom:SetColorTexture(unpack(COLORS.borderLight))
+    tab.bg:SetColorTexture(0, 0, 0, 0.3)
 
     -- Text
     tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    tab.text:SetPoint("CENTER", 0, 1)
+    tab.text:SetPoint("CENTER", 0, 0)
     tab.text:SetText(label)
     tab.text:SetTextColor(unpack(COLORS.textMuted))
 
@@ -591,14 +582,14 @@ createPageTab = function(parent, label, tabIndex, pageName)
 
     tab:SetScript("OnEnter", function(self)
         if GB.currentPage ~= self.pageName then
-            self.bg:SetColorTexture(unpack(COLORS.tabHover))
+            self.bg:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.4)
             self.text:SetTextColor(unpack(COLORS.guildGreen))
         end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if GB.currentPage ~= self.pageName then
-            self.bg:SetColorTexture(unpack(COLORS.bgDark))
+            self.bg:SetColorTexture(0, 0, 0, 0.3)
             self.text:SetTextColor(unpack(COLORS.textMuted))
         end
     end)
@@ -606,7 +597,7 @@ createPageTab = function(parent, label, tabIndex, pageName)
     return tab
 end
 
--- Create page tabs (Chat and Status)
+-- Create page tabs (Chat and Status) as a segmented control
 local function createPageTabs()
     if not GB.mainFrame then return end
 
@@ -617,13 +608,38 @@ local function createPageTabs()
     end
     GB.pageTabs = {}
 
-    -- Create Chat tab at top left (below title bar)
-    GB.pageTabs[1] = createPageTab(GB.mainFrame, "Chat", 1, "chat")
-    GB.pageTabs[1]:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 8, -28)
+    -- Create segmented control container
+    if not GB.pageTabContainer then
+        GB.pageTabContainer = CreateFrame("Frame", nil, GB.mainFrame, "BackdropTemplate")
+    end
+    local container = GB.pageTabContainer
+    container:SetSize(112, 24)  -- 55*2 + 2 padding
+    container:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 8, -28)
+    container:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    container:SetBackdropColor(0.05, 0.05, 0.06, 0.9)
+    container:SetBackdropBorderColor(COLORS.guildGreenDark[1], COLORS.guildGreenDark[2], COLORS.guildGreenDark[3], 0.8)
+    container:Show()
 
-    -- Create Status tab next to Chat
-    GB.pageTabs[2] = createPageTab(GB.mainFrame, "Status", 2, "status")
-    GB.pageTabs[2]:SetPoint("LEFT", GB.pageTabs[1], "RIGHT", 2, 0)
+    -- Create Chat tab (left segment)
+    GB.pageTabs[1] = createPageTab(container, "Chat", 1, "chat", true, false)
+    GB.pageTabs[1]:SetPoint("LEFT", container, "LEFT", 1, 0)
+
+    -- Create Status tab (right segment)
+    GB.pageTabs[2] = createPageTab(container, "Status", 2, "status", false, true)
+    GB.pageTabs[2]:SetPoint("LEFT", GB.pageTabs[1], "RIGHT", 0, 0)
+
+    -- Separator line between page tabs and guild tabs
+    if not GB.tabSeparator then
+        GB.tabSeparator = GB.mainFrame:CreateTexture(nil, "ARTWORK")
+    end
+    GB.tabSeparator:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 8, -56)
+    GB.tabSeparator:SetPoint("TOPRIGHT", GB.mainFrame, "TOPRIGHT", -8, -56)
+    GB.tabSeparator:SetHeight(1)
+    GB.tabSeparator:SetColorTexture(COLORS.borderLight[1], COLORS.borderLight[2], COLORS.borderLight[3], 0.5)
 
     updatePageTabSelection()
 end
@@ -632,7 +648,7 @@ end
 updatePageVisibility = function()
     if not GB.mainFrame then return end
 
-    -- Hide/show guild filter tabs based on current page
+    -- Hide/show guild filter tabs and separator based on current page
     for key, tab in pairs(GB.tabButtons) do
         if key:match("^guild") or key == "all" then
             if GB.currentPage == "chat" then
@@ -643,13 +659,23 @@ updatePageVisibility = function()
         end
     end
 
+    -- Show/hide separator line
+    if GB.tabSeparator then
+        if GB.currentPage == "chat" then
+            GB.tabSeparator:Show()
+        else
+            GB.tabSeparator:Hide()
+        end
+    end
+
     -- Update page tab selection
     updatePageTabSelection()
 
     -- Adjust scroll frame and scrollbar position
     if GB.scrollFrame then
         local titleBarHeight = 26
-        local pageTabHeight = 28
+        local pageTabHeight = 32  -- Segmented control + spacing
+        local separatorHeight = 4  -- Separator + padding
         local scrollTopOffset
         if GB.currentPage == "chat" then
             -- Calculate guild tab rows
@@ -665,10 +691,10 @@ updatePageVisibility = function()
             local tabsPerRow = math.max(1, math.floor(maxWidth / (tabWidth + tabSpacing)))
             local numRows = math.ceil(guildCount / tabsPerRow)
             if numRows < 1 then numRows = 1 end
-            scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 6
+            scrollTopOffset = titleBarHeight + pageTabHeight + separatorHeight + (numRows * rowHeight) + 4
         else
             -- Status page - just page tabs, no guild filter tabs
-            scrollTopOffset = titleBarHeight + pageTabHeight + 6
+            scrollTopOffset = titleBarHeight + pageTabHeight + 8
         end
         GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
         -- Also adjust scrollbar track to match
@@ -694,8 +720,9 @@ function GB:RebuildTabs()
     local tabWidth = 80
     local rowHeight = 38
     local titleBarHeight = 26
-    local pageTabHeight = 28
-    local topRowY = -(titleBarHeight + pageTabHeight)  -- Below title bar and page tabs
+    local pageTabHeight = 32  -- Segmented control height + spacing
+    local separatorHeight = 4  -- Separator line + padding
+    local topRowY = -(titleBarHeight + pageTabHeight + separatorHeight)  -- Below title bar, page tabs, and separator
 
     -- Guild filter tabs (only visible on chat page)
     local myGuildName = GetGuildInfo("player")
@@ -902,7 +929,7 @@ function GB:CreateBridgeUI()
         end
     end)
 
-    -- Create page tabs
+    -- Create page tabs (segmented control)
     createPageTabs()
 
     -- Build guild filter tabs
@@ -930,8 +957,9 @@ function GB:CreateBridgeUI()
     end)
 
     -- Scroll frame for messages - chat area (leave room for scrollbar on right)
+    -- Initial position will be adjusted by updatePageVisibility based on tab rows
     self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
-    self.scrollFrame:SetPoint("TOPLEFT", 10, -94)
+    self.scrollFrame:SetPoint("TOPLEFT", 10, -100)  -- Adjusted for new layout
     self.scrollFrame:SetPoint("BOTTOMRIGHT", -24, 40)  -- Extra space for scrollbar
     self.scrollFrame:SetFontObject(ChatFontNormal)
     self.scrollFrame:SetJustifyH("LEFT")
@@ -949,7 +977,7 @@ function GB:CreateBridgeUI()
 
     -- Scrollbar track (visual background)
     local scrollBarTrack = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
-    scrollBarTrack:SetPoint("TOPRIGHT", -8, -94)
+    scrollBarTrack:SetPoint("TOPRIGHT", -8, -100)  -- Adjusted for new layout
     scrollBarTrack:SetPoint("BOTTOMRIGHT", -8, 40)
     scrollBarTrack:SetWidth(12)
     scrollBarTrack:SetBackdrop({
