@@ -11,6 +11,7 @@ GB.eventFrame:RegisterEvent("CHAT_MSG_GUILD")
 GB.eventFrame:RegisterEvent("BN_CHAT_MSG_ADDON")
 GB.eventFrame:RegisterEvent("BN_FRIEND_INFO_CHANGED")
 GB.eventFrame:RegisterEvent("BN_CONNECTED")
+GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
 
 -- Track if we've done initial handshake
 local initialHandshakeDone = false
@@ -96,6 +97,21 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 GB:SendHandshakeToFriend(gameAccountID)
             end
         end
+
+    elseif event == "PLAYER_GUILD_UPDATE" then
+        -- Fires when player joins or leaves a guild
+        -- Small delay to let guild info update
+        C_Timer.After(0.5, function()
+            local guildName = GetGuildInfo("player")
+            if guildName and GB.allowedGuilds[guildName] then
+                -- Joined an allowed guild - send handshake to all friends
+                GB:ForceSendHandshake()
+            else
+                -- Left guild or joined non-allowed guild - notify peers we're gone
+                -- Send a "LEAVE" message so peers remove us from their connections
+                GB:SendLeaveNotification()
+            end
+        end)
 
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender, _, _, _, _, _, _, _, _, _, guid = ...

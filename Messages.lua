@@ -177,20 +177,30 @@ function GB:SendFromUI(messageText)
         return
     end
 
+    -- Must be in an allowed guild to send messages
+    local playerGuildName = GetGuildInfo("player")
+    if not playerGuildName or not self.allowedGuilds[playerGuildName] then
+        return
+    end
+
+    local guildClubId = getGuildClubId()
+    if not guildClubId then
+        return
+    end
+
     local targetFilter = self.currentFilter
 
     local originName, originRealm = UnitName("player")
     if not originRealm or originRealm == "" then
         originRealm = GetRealmName()
     end
-    local playerGuildName = GetGuildInfo("player")
     local playerGuildHomeRealm = self:GetGuildHomeRealm() or originRealm
 
     -- Get player's class for coloring
     local _, classFile = UnitClass("player")
 
-    -- Use guildName-guildHomeRealm as filter key
-    local filterKey = self:RegisterGuild(playerGuildName, playerGuildHomeRealm)
+    -- Use guildClubId for unique identification
+    local filterKey = self:RegisterGuild(playerGuildName, playerGuildHomeRealm, guildClubId)
 
     local short = self.guildShortNames[playerGuildName] or playerGuildName or ""
     -- Get the manually set realm for display, or use guildHomeRealm
@@ -427,10 +437,10 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     -- Display the message (pass guildHomeRealm, classFile, and guildClubId for proper filtering and coloring)
     self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
 
-    -- Re-relay to other friends (mesh network) - but NOT if this came from guild chat
-    -- Only re-relay if sourceType is not "G" (guild originated)
-    if GuildBridgeDB.bridgeEnabled and sourcePart ~= "G" then
-        self:SendBridgePayload(originPart, originRealmPart, messagePart, sourcePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+    -- Re-relay to other friends (mesh network) - only for guild chat messages ("G")
+    -- Don't re-relay UI messages ("U") or already-relayed messages ("R")
+    if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
+        self:SendBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
 end
 

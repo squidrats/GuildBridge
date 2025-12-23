@@ -42,6 +42,15 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
     end
 end
 
+-- Send leave notification to all friends (when leaving guild)
+function GB:SendLeaveNotification()
+    local friends = self:FindOnlineWoWFriends()
+    local payload = "[GBHS]LEAVE"
+    for _, friend in ipairs(friends) do
+        pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+    end
+end
+
 -- Send a handshake message - this is the direct send (no throttle for PONG responses)
 -- type: "HELLO" (announce), "PONG" (response to HELLO)
 function GB:SendHandshakeMessage(handshakeType, targetGameAccountID)
@@ -81,6 +90,17 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
     end
 
     local data = message:sub(7)
+
+    -- Handle LEAVE message (player left their guild)
+    if data == "LEAVE" then
+        self.connectedBridgeUsers[senderGameAccountID] = nil
+        self:UpdateConnectionIndicators()
+        if self.currentPage == "status" then
+            self:RefreshMessages()
+        end
+        return true
+    end
+
     -- New format: TYPE|guildName|playerRealm|guildHomeRealm|guildClubId
     local handshakeType, guildName, realmName, guildHomeRealm, guildClubId = data:match("([^|]+)|([^|]+)|([^|]*)|([^|]*)|?(.*)$")
 
