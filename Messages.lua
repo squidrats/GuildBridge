@@ -808,6 +808,10 @@ function GB:RefreshMessages()
             end
         end
 
+        -- Update scrollbar after refreshing status page
+        if self.updateScrollBar then
+            self.updateScrollBar()
+        end
         return
     end
 
@@ -822,5 +826,10 @@ function GB:RefreshMessages()
             local displayMsg = self.currentFilter and (msg.formattedNoTag or msg.formatted) or msg.formatted
             self.scrollFrame:AddMessage(displayMsg)
         end
+    end
+
+    -- Update scrollbar after refreshing messages
+    if self.updateScrollBar then
+        self.updateScrollBar()
     end
 end

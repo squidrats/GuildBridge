@@ -646,10 +646,11 @@ updatePageVisibility = function()
     -- Update page tab selection
     updatePageTabSelection()
 
-    -- Adjust scroll frame position
+    -- Adjust scroll frame and scrollbar position
     if GB.scrollFrame then
         local titleBarHeight = 26
         local pageTabHeight = 28
+        local scrollTopOffset
         if GB.currentPage == "chat" then
             -- Calculate guild tab rows
             local tabWidth = 80
@@ -664,12 +665,15 @@ updatePageVisibility = function()
             local tabsPerRow = math.max(1, math.floor(maxWidth / (tabWidth + tabSpacing)))
             local numRows = math.ceil(guildCount / tabsPerRow)
             if numRows < 1 then numRows = 1 end
-            local scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 6
-            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+            scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 6
         else
             -- Status page - just page tabs, no guild filter tabs
-            local scrollTopOffset = titleBarHeight + pageTabHeight + 6
-            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+            scrollTopOffset = titleBarHeight + pageTabHeight + 6
+        end
+        GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+        -- Also adjust scrollbar track to match
+        if GB.scrollBarTrack then
+            GB.scrollBarTrack:SetPoint("TOPRIGHT", -8, -scrollTopOffset)
         end
     end
 
@@ -856,14 +860,15 @@ function GB:CreateBridgeUI()
         self.text:SetTextColor(unpack(COLORS.textMuted))
     end)
 
-    -- Resize grip (bottom-right corner)
+    -- Resize grip (bottom-right corner) - larger hit area for easier clicking
     local resizeGrip = CreateFrame("Button", nil, self.mainFrame)
-    resizeGrip:SetSize(16, 16)
-    resizeGrip:SetPoint("BOTTOMRIGHT", -2, 2)
+    resizeGrip:SetSize(24, 24)
+    resizeGrip:SetPoint("BOTTOMRIGHT", 0, 0)
     resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
     resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
-    resizeGrip:GetNormalTexture():SetVertexColor(0.5, 0.5, 0.5, 0.6)
+    resizeGrip:GetNormalTexture():SetVertexColor(0.6, 0.6, 0.6, 0.8)
+    resizeGrip:GetHighlightTexture():SetVertexColor(0.8, 0.8, 0.8, 1)
     resizeGrip:SetScript("OnMouseDown", function()
         GB.mainFrame:StartSizing("BOTTOMRIGHT")
     end)
@@ -909,10 +914,10 @@ function GB:CreateBridgeUI()
         GameTooltip:Hide()
     end)
 
-    -- Scroll frame for messages - chat area
+    -- Scroll frame for messages - chat area (leave room for scrollbar on right)
     self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
     self.scrollFrame:SetPoint("TOPLEFT", 10, -94)
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
+    self.scrollFrame:SetPoint("BOTTOMRIGHT", -24, 40)  -- Extra space for scrollbar
     self.scrollFrame:SetFontObject(ChatFontNormal)
     self.scrollFrame:SetJustifyH("LEFT")
     self.scrollFrame:SetFading(false)
@@ -927,16 +932,114 @@ function GB:CreateBridgeUI()
     scrollBg:SetAllPoints()
     scrollBg:SetColorTexture(unpack(COLORS.bgChat))
 
+    -- Scrollbar track (visual background)
+    local scrollBarTrack = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
+    scrollBarTrack:SetPoint("TOPRIGHT", -8, -94)
+    scrollBarTrack:SetPoint("BOTTOMRIGHT", -8, 40)
+    scrollBarTrack:SetWidth(12)
+    scrollBarTrack:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    scrollBarTrack:SetBackdropColor(0.05, 0.05, 0.06, 0.8)
+    scrollBarTrack:SetBackdropBorderColor(unpack(COLORS.borderLight))
+
+    -- Scrollbar slider (actual interactive element)
+    local scrollBar = CreateFrame("Slider", nil, scrollBarTrack)
+    scrollBar:SetPoint("TOPLEFT", 1, -1)
+    scrollBar:SetPoint("BOTTOMRIGHT", -1, 1)
+    scrollBar:SetOrientation("VERTICAL")
+    scrollBar:SetMinMaxValues(0, 1)
+    scrollBar:SetValue(1)  -- Start at bottom (newest messages)
+    scrollBar:SetValueStep(1)
+    scrollBar:EnableMouseWheel(true)
+    scrollBar:SetObeyStepOnDrag(true)
+    self.scrollBar = scrollBar
+    self.scrollBarTrack = scrollBarTrack
+
+    -- Scrollbar thumb texture
+    local thumbTexture = scrollBar:CreateTexture(nil, "OVERLAY")
+    thumbTexture:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.7)
+    thumbTexture:SetSize(10, 30)
+    scrollBar:SetThumbTexture(thumbTexture)
+
+    -- Track if we're programmatically updating the scrollbar (to avoid feedback loop)
+    local updatingScrollBar = false
+
+    -- Update scrollbar to reflect current scroll position
+    -- ScrollingMessageFrame: offset 0 = viewing bottom (newest), higher offset = viewing older (top)
+    -- Slider: value 0 = thumb at top (oldest), value max = thumb at bottom (newest)
+    -- So we need to INVERT: sliderValue = maxOffset - scrollOffset
+    local function updateScrollBar()
+        local numMessages = self.scrollFrame:GetNumMessages()
+        local maxOffset = math.max(0, numMessages - 1)
+
+        if numMessages <= 1 then
+            scrollBarTrack:Hide()
+            return
+        end
+
+        local currentOffset = self.scrollFrame:GetScrollOffset()
+
+        updatingScrollBar = true
+        scrollBar:SetMinMaxValues(0, maxOffset)
+        -- Invert: when offset is 0 (bottom/newest), slider should be at max (thumb at bottom)
+        -- When offset is max (top/oldest), slider should be at 0 (thumb at top)
+        scrollBar:SetValue(maxOffset - currentOffset)
+        updatingScrollBar = false
+        scrollBarTrack:Show()
+    end
+    self.updateScrollBar = updateScrollBar
+
+    -- Scrollbar dragged by user - convert slider value back to scroll offset
+    scrollBar:SetScript("OnValueChanged", function(bar, value)
+        if updatingScrollBar then return end
+        local min, max = bar:GetMinMaxValues()
+        -- Invert: slider value 0 = oldest (max offset), slider value max = newest (offset 0)
+        local newOffset = math.floor(max - value + 0.5)
+        self.scrollFrame:SetScrollOffset(newOffset)
+    end)
+
+    -- Mouse wheel on scrollbar
+    scrollBar:SetScript("OnMouseWheel", function(bar, delta)
+        local min, max = bar:GetMinMaxValues()
+        local val = bar:GetValue()
+        -- Wheel up = show older messages = decrease slider value (thumb moves up)
+        -- Wheel down = show newer messages = increase slider value (thumb moves down)
+        if delta > 0 then
+            bar:SetValue(math.max(min, val - 3))
+        else
+            bar:SetValue(math.min(max, val + 3))
+        end
+    end)
+
+    -- Mouse wheel on message area
     self.scrollFrame:SetScript("OnMouseWheel", function(frame, delta)
         if delta > 0 then
             for i = 1, 3 do frame:ScrollUp() end
         else
             for i = 1, 3 do frame:ScrollDown() end
         end
+        updateScrollBar()
     end)
+
     self.scrollFrame:SetScript("OnHyperlinkClick", function(frame, link, text, button)
         SetItemRef(link, text, button)
     end)
+
+    -- Update scrollbar when frame is shown
+    self.scrollFrame:HookScript("OnShow", updateScrollBar)
+
+    -- Hook AddMessage to update scrollbar when new messages arrive
+    local originalAddMessage = self.scrollFrame.AddMessage
+    self.scrollFrame.AddMessage = function(frame, ...)
+        originalAddMessage(frame, ...)
+        -- Only update if at bottom (offset 0) to keep scroll position when reading history
+        if frame:GetScrollOffset() == 0 then
+            updateScrollBar()
+        end
+    end
 
     -- Input box container with guild-style border
     local inputBg = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
