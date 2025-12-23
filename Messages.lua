@@ -370,13 +370,17 @@ function GB:SendFromUI(messageText)
     local formattedNoTag = senderLink .. ": |cff40FF40" .. messageText .. "|r"
 
     -- If we have a target filter, the message should show under that guild's tab
-    -- (since we're sending TO that guild), otherwise use our own guild
+    -- (since we're sending TO that guild), otherwise it's a broadcast to all guilds
     local displayFilterKey = targetFilter or filterKey
+
+    -- When sending from "All" (no target filter), mark message to show in all tabs
+    local showInAllTabs = (targetFilter == nil)
 
     table.insert(self.messageHistory, {
         guildName = playerGuildName,
         guildHomeRealm = playerGuildHomeRealm,
-        filterKey = displayFilterKey,  -- Use target filter if set
+        filterKey = displayFilterKey,  -- Use target filter if set, or own guild
+        showInAllTabs = showInAllTabs,  -- Flag for messages sent from "All"
         formatted = formattedWithTag,
         formattedNoTag = formattedNoTag,
     })
@@ -384,10 +388,13 @@ function GB:SendFromUI(messageText)
         table.remove(self.messageHistory, 1)
     end
 
-    if self.scrollFrame and (self.currentFilter == nil or displayFilterKey == self.currentFilter) then
-        -- Use format without tag when viewing a specific guild's tab
-        local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
-        self.scrollFrame:AddMessage(displayMsg)
+    if self.scrollFrame then
+        -- Messages sent from "All" show in all tabs; targeted messages only show in that tab
+        if self.currentFilter == nil or displayFilterKey == self.currentFilter or showInAllTabs then
+            -- Use format without tag when viewing a specific guild's tab
+            local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
+            self.scrollFrame:AddMessage(displayMsg)
+        end
     end
 
     -- Record hash so we don't display it again when it comes back
@@ -806,7 +813,11 @@ function GB:RefreshMessages()
 
     -- Normal message display
     for _, msg in ipairs(self.messageHistory) do
-        if self.currentFilter == nil or msg.filterKey == self.currentFilter then
+        -- Show message if:
+        -- 1. We're on "All" tab (currentFilter == nil), OR
+        -- 2. Message's filterKey matches current tab, OR
+        -- 3. Message was sent from "All" (showInAllTabs flag) - should show in every tab
+        if self.currentFilter == nil or msg.filterKey == self.currentFilter or msg.showInAllTabs then
             -- Use format without guild tag when viewing a specific guild's tab
             local displayMsg = self.currentFilter and (msg.formattedNoTag or msg.formatted) or msg.formatted
             self.scrollFrame:AddMessage(displayMsg)
