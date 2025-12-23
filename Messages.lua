@@ -58,19 +58,24 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     -- If this is a UI message targeted to another guild, display under that tab instead
     local displayFilterKey = displayInTargetTab or filterKey
 
-    local short = self.guildShortNames[guildName] or guildName or ""
-    -- Get the manually set realm for display, or use guildHomeRealm
-    local displayRealm = nil
-    if self.knownGuilds[filterKey] and self.knownGuilds[filterKey].manualRealm then
-        displayRealm = self.knownGuilds[filterKey].realmName
-    elseif guildHomeRealm and guildHomeRealm ~= "" then
-        displayRealm = guildHomeRealm
+    -- Build guild tag based on guild number and ElvUI presence
+    local guildNum = self:GetGuildNumber(guildName, guildHomeRealm)
+    local guildTag = ""
+    if guildNum then
+        -- Multiple guilds with same name - show number to distinguish
+        if self:HasElvUI() then
+            guildTag = "[G" .. guildNum .. "] "
+        else
+            guildTag = "[Guild-" .. guildNum .. "] "
+        end
+    else
+        -- Single guild or no number configured - show standard format
+        if self:HasElvUI() then
+            guildTag = "[G] "
+        else
+            guildTag = "[Guild] "
+        end
     end
-    local realmSuffix = ""
-    if displayRealm and displayRealm ~= "" then
-        realmSuffix = "-" .. displayRealm
-    end
-    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
     -- Build the player link with full Name-Realm for cross-realm invites
     -- The hyperlink MUST include the realm for cross-realm party invites to work
@@ -314,16 +319,24 @@ function GB:SendFromUI(messageText)
     -- Use guildClubId for unique identification
     local filterKey = self:RegisterGuild(playerGuildName, playerGuildHomeRealm, guildClubId)
 
-    local short = self.guildShortNames[playerGuildName] or playerGuildName or ""
-    -- Get the manually set realm for display, or use guildHomeRealm
-    local displayRealm = nil
-    if self.knownGuilds[filterKey] and self.knownGuilds[filterKey].manualRealm then
-        displayRealm = self.knownGuilds[filterKey].realmName
+    -- Build guild tag based on guild number and ElvUI presence
+    local guildNum = self:GetGuildNumber(playerGuildName, playerGuildHomeRealm)
+    local guildTag = ""
+    if guildNum then
+        -- Multiple guilds with same name - show number to distinguish
+        if self:HasElvUI() then
+            guildTag = "[G" .. guildNum .. "] "
+        else
+            guildTag = "[Guild-" .. guildNum .. "] "
+        end
     else
-        displayRealm = playerGuildHomeRealm
+        -- Single guild or no number configured - show standard format
+        if self:HasElvUI() then
+            guildTag = "[G] "
+        else
+            guildTag = "[Guild] "
+        end
     end
-    local realmSuffix = displayRealm and displayRealm ~= "" and ("-" .. displayRealm) or ""
-    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
     local fullName = originName .. "-" .. originRealm
     local classColor = self:GetClassColor(originName, originRealm)
@@ -396,16 +409,24 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     -- Use guildName-guildClubId as filter key (clubId is required for registration)
     local filterKey = self:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
 
-    local short = self.guildShortNames[myGuildName] or myGuildName or ""
-    -- Get the manually set realm for display, or use guildHomeRealm
-    local displayRealm = nil
-    if self.knownGuilds[filterKey] and self.knownGuilds[filterKey].manualRealm then
-        displayRealm = self.knownGuilds[filterKey].realmName
+    -- Build guild tag based on guild number and ElvUI presence
+    local guildNum = self:GetGuildNumber(myGuildName, myGuildHomeRealm)
+    local guildTag = ""
+    if guildNum then
+        -- Multiple guilds with same name - show number to distinguish
+        if self:HasElvUI() then
+            guildTag = "[G" .. guildNum .. "] "
+        else
+            guildTag = "[Guild-" .. guildNum .. "] "
+        end
     else
-        displayRealm = myGuildHomeRealm
+        -- Single guild or no number configured - show standard format
+        if self:HasElvUI() then
+            guildTag = "[G] "
+        else
+            guildTag = "[Guild] "
+        end
     end
-    local realmSuffix = displayRealm and displayRealm ~= "" and ("-" .. displayRealm) or ""
-    local guildTag = short ~= "" and ("<" .. short .. realmSuffix .. "> ") or ""
 
     local fullName = originName .. "-" .. originRealm
 

@@ -637,6 +637,11 @@ function GB:RebuildTabs()
     if myFilterKey and self.knownGuilds[myFilterKey] then
         local info = self.knownGuilds[myFilterKey]
         local short = self.guildShortNames[info.guildName] or info.guildName or "?"
+        -- Append guild number if configured
+        local guildNum = self:GetGuildNumber(info.guildName, info.guildHomeRealm)
+        if guildNum then
+            short = short .. " " .. guildNum
+        end
         local realmLabel = nil
         if info.manualRealm and info.realmName then
             realmLabel = info.realmName
@@ -659,6 +664,11 @@ function GB:RebuildTabs()
             end
 
             local short = self.guildShortNames[info.guildName] or info.guildName or "?"
+            -- Append guild number if configured
+            local guildNum = self:GetGuildNumber(info.guildName, info.guildHomeRealm)
+            if guildNum then
+                short = short .. " " .. guildNum
+            end
             -- Show manually set realm if available, otherwise show guild home realm (from GM)
             local realmLabel = nil
             if info.manualRealm and info.realmName then

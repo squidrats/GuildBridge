@@ -44,6 +44,26 @@ GB.guildShortNames = {
     ["Bestiez"] = "Bestiez",
 }
 
+-- Guild numbers for display (based on server)
+-- Format: ["GuildName-HomeRealm"] = number
+GB.guildNumbers = {
+    ["MAKE DUROTAR GREAT AGAIN-Tichondrius"] = 1,
+    ["MAKE DUROTAR GREAT AGAIN-Illidan"] = 3,
+    ["Bestiez-Tichondrius"] = 2,  -- Example, adjust as needed
+}
+
+-- Check if ElvUI is loaded
+function GB:HasElvUI()
+    return ElvUI ~= nil
+end
+
+-- Get guild number for a guild based on its home realm
+function GB:GetGuildNumber(guildName, guildHomeRealm)
+    if not guildName then return nil end
+    local key = guildName .. "-" .. (guildHomeRealm or "")
+    return self.guildNumbers[key]
+end
+
 -- Only relay messages from these guilds
 GB.allowedGuilds = {
     -- ["MAKE ELWYNN GREAT AGAIN"] = true,
