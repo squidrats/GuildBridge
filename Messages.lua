@@ -59,21 +59,22 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     local displayFilterKey = displayInTargetTab or filterKey
 
     -- Build guild tag based on guild number and ElvUI presence
+    -- Use green color (|cff40FF40) to match native guild chat
     local guildNum = self:GetGuildNumber(guildName, guildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "[G" .. guildNum .. "] "
+            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
         else
-            guildTag = "[Guild-" .. guildNum .. "] "
+            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "[G] "
+            guildTag = "|cff40FF40[G]|r "
         else
-            guildTag = "[Guild] "
+            guildTag = "|cff40FF40[Guild]|r "
         end
     end
 
@@ -99,8 +100,9 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. displayName .. "]|r|h"
 
     -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
-    local formattedWithTag = guildTag .. senderLink .. ": " .. messageText
-    local formattedNoTag = senderLink .. ": " .. messageText
+    -- Message text is also green to match guild chat
+    local formattedWithTag = guildTag .. senderLink .. ": |cff40FF40" .. messageText .. "|r"
+    local formattedNoTag = senderLink .. ": |cff40FF40" .. messageText .. "|r"
 
     -- Record activity for connection indicator
     self:RecordGuildActivity(displayFilterKey)
@@ -320,21 +322,22 @@ function GB:SendFromUI(messageText)
     local filterKey = self:RegisterGuild(playerGuildName, playerGuildHomeRealm, guildClubId)
 
     -- Build guild tag based on guild number and ElvUI presence
+    -- Use green color (|cff40FF40) to match native guild chat
     local guildNum = self:GetGuildNumber(playerGuildName, playerGuildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "[G" .. guildNum .. "] "
+            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
         else
-            guildTag = "[Guild-" .. guildNum .. "] "
+            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "[G] "
+            guildTag = "|cff40FF40[G]|r "
         else
-            guildTag = "[Guild] "
+            guildTag = "|cff40FF40[Guild]|r "
         end
     end
 
@@ -343,8 +346,9 @@ function GB:SendFromUI(messageText)
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. originName .. "]|r|h"
 
     -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
-    local formattedWithTag = guildTag .. senderLink .. ": " .. messageText
-    local formattedNoTag = senderLink .. ": " .. messageText
+    -- Message text is also green to match guild chat
+    local formattedWithTag = guildTag .. senderLink .. ": |cff40FF40" .. messageText .. "|r"
+    local formattedNoTag = senderLink .. ": |cff40FF40" .. messageText .. "|r"
 
     -- If we have a target filter, the message should show under that guild's tab
     -- (since we're sending TO that guild), otherwise use our own guild
@@ -410,21 +414,22 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     local filterKey = self:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
 
     -- Build guild tag based on guild number and ElvUI presence
+    -- Use green color (|cff40FF40) to match native guild chat
     local guildNum = self:GetGuildNumber(myGuildName, myGuildHomeRealm)
     local guildTag = ""
     if guildNum then
         -- Multiple guilds with same name - show number to distinguish
         if self:HasElvUI() then
-            guildTag = "[G" .. guildNum .. "] "
+            guildTag = "|cff40FF40[G" .. guildNum .. "]|r "
         else
-            guildTag = "[Guild-" .. guildNum .. "] "
+            guildTag = "|cff40FF40[Guild-" .. guildNum .. "]|r "
         end
     else
         -- Single guild or no number configured - show standard format
         if self:HasElvUI() then
-            guildTag = "[G] "
+            guildTag = "|cff40FF40[G]|r "
         else
-            guildTag = "[Guild] "
+            guildTag = "|cff40FF40[Guild]|r "
         end
     end
 
@@ -443,8 +448,9 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. displayName .. "]|r|h"
 
     -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
-    local formattedWithTag = guildTag .. senderLink .. ": " .. text
-    local formattedNoTag = senderLink .. ": " .. text
+    -- Message text is also green to match guild chat
+    local formattedWithTag = guildTag .. senderLink .. ": |cff40FF40" .. text .. "|r"
+    local formattedNoTag = senderLink .. ": |cff40FF40" .. text .. "|r"
 
     table.insert(self.messageHistory, {
         guildName = myGuildName,

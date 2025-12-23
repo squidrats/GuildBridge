@@ -3,6 +3,31 @@
 
 local addonName, GB = ...
 
+-- UI Constants
+local MIN_WIDTH = 350
+local MIN_HEIGHT = 250
+local DEFAULT_WIDTH = 450
+local DEFAULT_HEIGHT = 350
+
+-- Modern color scheme
+local COLORS = {
+    bgDark = { 0.08, 0.08, 0.10, 0.97 },
+    bgMedium = { 0.12, 0.12, 0.14, 0.95 },
+    bgLight = { 0.18, 0.18, 0.20, 0.9 },
+    border = { 0.25, 0.25, 0.28, 1 },
+    borderHighlight = { 0.4, 0.4, 0.45, 1 },
+    accent = { 0.3, 0.7, 0.4, 1 },        -- Green accent
+    accentGold = { 1, 0.82, 0, 1 },       -- Gold for selected
+    textNormal = { 0.85, 0.85, 0.85, 1 },
+    textMuted = { 0.55, 0.55, 0.55, 1 },
+    textHighlight = { 1, 1, 1, 1 },
+    tabSelected = { 0.15, 0.15, 0.20, 1 },
+    tabHover = { 0.20, 0.20, 0.25, 1 },
+    statusGreen = { 0.3, 0.8, 0.3, 1 },
+    statusRed = { 0.8, 0.3, 0.3, 1 },
+    inputBg = { 0.1, 0.1, 0.12, 1 },
+}
+
 -- Forward declarations for local functions
 local updateTabHighlights
 local updatePageTabSelection
@@ -24,21 +49,19 @@ local forgetAllButton
 updateTabHighlights = function()
     for _, tab in pairs(GB.tabButtons) do
         if tab.filterValue == GB.currentFilter then
-            tab.guildText:SetFontObject(GameFontHighlight)
-            tab.guildText:SetTextColor(1, 0.82, 0)
-            tab.bg:SetColorTexture(0.2, 0.2, 0.3, 1)
-            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1)
+            tab.guildText:SetTextColor(unpack(COLORS.accentGold))
+            tab.bg:SetColorTexture(unpack(COLORS.tabSelected))
+            tab.borderTop:SetColorTexture(COLORS.accentGold[1], COLORS.accentGold[2], COLORS.accentGold[3], 0.8)
             if tab.realmText then
                 tab.realmText:SetTextColor(0.7, 0.7, 0.7)
             end
             tab.selected = true
         else
-            tab.guildText:SetFontObject(GameFontNormal)
-            tab.guildText:SetTextColor(0.8, 0.8, 0.8)
-            tab.bg:SetColorTexture(0.12, 0.12, 0.12, 0.9)
-            tab.border:SetColorTexture(0.3, 0.3, 0.3, 1)
+            tab.guildText:SetTextColor(unpack(COLORS.textNormal))
+            tab.bg:SetColorTexture(unpack(COLORS.bgMedium))
+            tab.borderTop:SetColorTexture(0, 0, 0, 0)
             if tab.realmText then
-                tab.realmText:SetTextColor(0.5, 0.5, 0.5)
+                tab.realmText:SetTextColor(unpack(COLORS.textMuted))
             end
             tab.selected = false
         end
@@ -66,13 +89,16 @@ function GB:UpdateConnectionIndicators()
             -- Only match on filterKey - guildName alone is not unique (same guild name on different realms)
             local isMyGuild = (tab.filterValue == myFilterKey)
             if isMyGuild then
-                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
+                tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Green")
+                tab.statusDot:SetVertexColor(unpack(COLORS.statusGreen))
             elseif self:HasConnectedUserInGuild(tab.filterValue) then
                 -- Has a bridge user connected in this guild - green
-                tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
+                tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Green")
+                tab.statusDot:SetVertexColor(unpack(COLORS.statusGreen))
             else
                 -- No confirmed bridge user in this guild - red
-                tab.statusDot:SetColorTexture(0.8, 0.3, 0.3, 1)
+                tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Red")
+                tab.statusDot:SetVertexColor(unpack(COLORS.statusRed))
             end
         end
     end
@@ -384,47 +410,67 @@ local function showAllTabContextMenu()
     allTabContextMenu:Show()
 end
 
--- Create a guild filter tab
+-- Create a guild filter tab with modern styling
 createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffset, guildName, tabWidth)
-    tabWidth = tabWidth or 72
+    tabWidth = tabWidth or 76
+    local tabHeight = 32
     local tab = CreateFrame("Frame", nil, parent)
-    tab:SetSize(tabWidth, 34)
+    tab:SetSize(tabWidth, tabHeight)
     tab:SetPoint("TOPLEFT", parent, "TOPLEFT", xOffset, yOffset)
     tab:SetFrameLevel(parent:GetFrameLevel() + 10)
     tab:EnableMouse(true)
     tab.filterValue = filterValue
     tab.guildName = guildName
 
+    -- Background with subtle gradient effect (simulated with solid color)
     local bg = tab:CreateTexture(nil, "BACKGROUND")
-    bg:SetPoint("TOPLEFT", 1, -1)
-    bg:SetPoint("BOTTOMRIGHT", -1, 1)
-    bg:SetColorTexture(0.15, 0.15, 0.15, 0.9)
+    bg:SetPoint("TOPLEFT", 0, 0)
+    bg:SetPoint("BOTTOMRIGHT", 0, 0)
+    bg:SetColorTexture(unpack(COLORS.bgMedium))
     tab.bg = bg
 
-    local border = tab:CreateTexture(nil, "BORDER")
-    border:SetAllPoints()
-    border:SetColorTexture(0.4, 0.4, 0.4, 1)
-    tab.border = border
+    -- Top accent border (shows when selected)
+    local borderTop = tab:CreateTexture(nil, "BORDER")
+    borderTop:SetPoint("TOPLEFT", 0, 0)
+    borderTop:SetPoint("TOPRIGHT", 0, 0)
+    borderTop:SetHeight(2)
+    borderTop:SetColorTexture(0, 0, 0, 0)
+    tab.borderTop = borderTop
 
+    -- Bottom border (subtle separator)
+    local borderBottom = tab:CreateTexture(nil, "BORDER")
+    borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
+    borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
+    borderBottom:SetHeight(1)
+    borderBottom:SetColorTexture(unpack(COLORS.border))
+    tab.borderBottom = borderBottom
+
+    -- Status indicator dot (for guild tabs)
     if guildName then
         tab.statusDot = tab:CreateTexture(nil, "OVERLAY")
-        tab.statusDot:SetSize(8, 8)
+        tab.statusDot:SetSize(10, 10)
         tab.statusDot:SetPoint("TOPRIGHT", tab, "TOPRIGHT", -3, -3)
+        -- Make it circular using a simple texture trick
+        tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Green")
+        tab.statusDot:SetVertexColor(0.3, 0.8, 0.3, 1)
     end
 
-    tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    -- Guild name text
+    tab.guildText = tab:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     if realmLabel and realmLabel ~= "" then
-        tab.guildText:SetPoint("TOP", tab, "TOP", 0, -5)
+        tab.guildText:SetPoint("TOP", tab, "TOP", 0, -6)
     else
         tab.guildText:SetPoint("CENTER", tab, "CENTER", 0, 0)
     end
     tab.guildText:SetText(guildLabel)
+    tab.guildText:SetTextColor(unpack(COLORS.textNormal))
 
+    -- Realm name text (smaller, muted)
     if realmLabel and realmLabel ~= "" then
         tab.realmText = tab:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
-        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -2)
+        tab.realmText:SetPoint("TOP", tab.guildText, "BOTTOM", 0, -1)
         tab.realmText:SetText(realmLabel)
-        tab.realmText:SetTextColor(0.5, 0.5, 0.5)
+        tab.realmText:SetTextColor(unpack(COLORS.textMuted))
     end
 
     tab:SetScript("OnMouseDown", function(self, button)
@@ -432,7 +478,6 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
             if filterValue and guildName then
                 showContextMenu(filterValue, guildLabel, guildName)
             elseif not filterValue and guildLabel == "All" then
-                -- Right-click on All tab
                 showAllTabContextMenu()
             end
         elseif button == "LeftButton" then
@@ -444,17 +489,15 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
 
     tab:SetScript("OnEnter", function(self)
         if not self.selected then
-            self.guildText:SetTextColor(1, 1, 1)
-            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1)
-            self.border:SetColorTexture(0.5, 0.5, 0.5, 1)
+            self.guildText:SetTextColor(unpack(COLORS.textHighlight))
+            self.bg:SetColorTexture(unpack(COLORS.tabHover))
         end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if not self.selected then
-            self.guildText:SetTextColor(0.8, 0.8, 0.8)
-            self.bg:SetColorTexture(0.12, 0.12, 0.12, 0.9)
-            self.border:SetColorTexture(0.3, 0.3, 0.3, 1)
+            self.guildText:SetTextColor(unpack(COLORS.textNormal))
+            self.bg:SetColorTexture(unpack(COLORS.bgMedium))
         end
     end)
 
@@ -466,14 +509,14 @@ updatePageTabSelection = function()
     for i, tab in ipairs(GB.pageTabs) do
         if tab.pageName == GB.currentPage then
             -- Selected tab
-            tab.bg:SetColorTexture(0.2, 0.2, 0.3, 1)
-            tab.border:SetColorTexture(0.8, 0.6, 0.2, 1)
-            tab.text:SetTextColor(1, 0.82, 0)
+            tab.bg:SetColorTexture(unpack(COLORS.tabSelected))
+            tab.borderBottom:SetColorTexture(unpack(COLORS.accentGold))
+            tab.text:SetTextColor(unpack(COLORS.accentGold))
         else
             -- Unselected tab
-            tab.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
-            tab.border:SetColorTexture(0.4, 0.4, 0.4, 1)
-            tab.text:SetTextColor(0.8, 0.8, 0.8)
+            tab.bg:SetColorTexture(unpack(COLORS.bgDark))
+            tab.borderBottom:SetColorTexture(unpack(COLORS.border))
+            tab.text:SetTextColor(unpack(COLORS.textNormal))
         end
     end
 end
@@ -481,25 +524,27 @@ end
 -- Create a styled page tab (Chat/Status)
 createPageTab = function(parent, label, tabIndex, pageName)
     local tab = CreateFrame("Button", "GuildBridgePageTab" .. tabIndex, parent)
-    tab:SetSize(60, 24)
+    tab:SetSize(70, 26)
     tab:SetID(tabIndex)
     tab.pageName = pageName
 
     -- Background
     tab.bg = tab:CreateTexture(nil, "BACKGROUND")
     tab.bg:SetAllPoints()
-    tab.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
+    tab.bg:SetColorTexture(unpack(COLORS.bgDark))
 
-    -- Border
-    tab.border = tab:CreateTexture(nil, "BORDER")
-    tab.border:SetPoint("TOPLEFT", -1, 1)
-    tab.border:SetPoint("BOTTOMRIGHT", 1, -1)
-    tab.border:SetColorTexture(0.4, 0.4, 0.4, 1)
+    -- Bottom accent border
+    tab.borderBottom = tab:CreateTexture(nil, "BORDER")
+    tab.borderBottom:SetPoint("BOTTOMLEFT", 0, 0)
+    tab.borderBottom:SetPoint("BOTTOMRIGHT", 0, 0)
+    tab.borderBottom:SetHeight(2)
+    tab.borderBottom:SetColorTexture(unpack(COLORS.border))
 
     -- Text
     tab.text = tab:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    tab.text:SetPoint("CENTER")
+    tab.text:SetPoint("CENTER", 0, 1)
     tab.text:SetText(label)
+    tab.text:SetTextColor(unpack(COLORS.textNormal))
 
     tab:SetScript("OnClick", function(self)
         PlaySound(SOUNDKIT.IG_CHARACTER_INFO_TAB)
@@ -509,15 +554,15 @@ createPageTab = function(parent, label, tabIndex, pageName)
 
     tab:SetScript("OnEnter", function(self)
         if GB.currentPage ~= self.pageName then
-            self.bg:SetColorTexture(0.2, 0.2, 0.2, 1)
-            self.text:SetTextColor(1, 1, 1)
+            self.bg:SetColorTexture(unpack(COLORS.tabHover))
+            self.text:SetTextColor(unpack(COLORS.textHighlight))
         end
     end)
 
     tab:SetScript("OnLeave", function(self)
         if GB.currentPage ~= self.pageName then
-            self.bg:SetColorTexture(0.1, 0.1, 0.1, 0.9)
-            self.text:SetTextColor(0.8, 0.8, 0.8)
+            self.bg:SetColorTexture(unpack(COLORS.bgDark))
+            self.text:SetTextColor(unpack(COLORS.textNormal))
         end
     end)
 
@@ -561,33 +606,33 @@ updatePageVisibility = function()
         end
     end
 
-    -- Update page tab selection (native WoW style)
+    -- Update page tab selection
     updatePageTabSelection()
 
     -- Adjust scroll frame position
     if GB.scrollFrame then
-        local pageTabHeight = 28  -- Height of page tabs + spacing
+        local titleBarHeight = 28
+        local pageTabHeight = 30
         if GB.currentPage == "chat" then
             -- Calculate guild tab rows
-            local tabWidth = 72
+            local tabWidth = 76
             local tabSpacing = 4
-            local rowHeight = 38
-            local maxWidth = GB.mainFrame:GetWidth() - 16
-            -- Count: "All" tab + all known guilds (including own guild now)
-            local guildCount = 1  -- Start with 1 for "All" tab
+            local rowHeight = 36
+            local maxWidth = GB.mainFrame:GetWidth() - 20
+            -- Count: "All" tab + all known guilds
+            local guildCount = 1
             for _ in pairs(GB.knownGuilds) do
                 guildCount = guildCount + 1
             end
-            local tabsPerRow = math.floor(maxWidth / (tabWidth + tabSpacing))
+            local tabsPerRow = math.max(1, math.floor(maxWidth / (tabWidth + tabSpacing)))
             local numRows = math.ceil(guildCount / tabsPerRow)
             if numRows < 1 then numRows = 1 end
-            -- Page tabs + guild filter rows
-            local scrollTopOffset = 24 + pageTabHeight + (numRows * rowHeight)
-            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+            local scrollTopOffset = titleBarHeight + pageTabHeight + (numRows * rowHeight) + 4
+            GB.scrollFrame:SetPoint("TOPLEFT", 12, -scrollTopOffset)
         else
             -- Status page - just page tabs, no guild filter tabs
-            local scrollTopOffset = 24 + pageTabHeight
-            GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
+            local scrollTopOffset = titleBarHeight + pageTabHeight + 4
+            GB.scrollFrame:SetPoint("TOPLEFT", 12, -scrollTopOffset)
         end
     end
 
@@ -605,10 +650,11 @@ function GB:RebuildTabs()
     self.tabButtons = {}
 
     local tabSpacing = 4
-    local tabWidth = 72
-    local rowHeight = 38
-    local pageTabHeight = 28
-    local topRowY = -(24 + pageTabHeight)  -- Below title bar and page tabs
+    local tabWidth = 76
+    local rowHeight = 36
+    local titleBarHeight = 28
+    local pageTabHeight = 30
+    local topRowY = -(titleBarHeight + pageTabHeight)  -- Below title bar and page tabs
 
     -- Guild filter tabs (only visible on chat page)
     local myGuildName = GetGuildInfo("player")
@@ -687,90 +733,213 @@ function GB:RebuildTabs()
     self:UpdateConnectionIndicators()
 end
 
--- Create the main bridge UI
+-- Create the main bridge UI with modern styling
 function GB:CreateBridgeUI()
     if self.mainFrame then
         return
     end
 
-    self.mainFrame = CreateFrame("Frame", "GuildBridgeFrame", UIParent, "BasicFrameTemplateWithInset")
-    self.mainFrame:SetSize(420, 300)
+    -- Main frame with custom backdrop instead of BasicFrameTemplate
+    self.mainFrame = CreateFrame("Frame", "GuildBridgeFrame", UIParent, "BackdropTemplate")
+    self.mainFrame:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     self.mainFrame:SetPoint("CENTER")
     self.mainFrame:SetMovable(true)
+    self.mainFrame:SetResizable(true)
+    self.mainFrame:SetResizeBounds(MIN_WIDTH, MIN_HEIGHT, 800, 600)
     self.mainFrame:EnableMouse(true)
+    self.mainFrame:SetClampedToScreen(true)
+    self.mainFrame:SetFrameStrata("MEDIUM")
+    self.mainFrame:SetFrameLevel(100)
+
+    -- Modern dark backdrop
+    self.mainFrame:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+        insets = { left = 1, right = 1, top = 1, bottom = 1 },
+    })
+    self.mainFrame:SetBackdropColor(unpack(COLORS.bgDark))
+    self.mainFrame:SetBackdropBorderColor(unpack(COLORS.border))
+
+    -- Title bar background
+    local titleBar = self.mainFrame:CreateTexture(nil, "ARTWORK")
+    titleBar:SetPoint("TOPLEFT", 0, 0)
+    titleBar:SetPoint("TOPRIGHT", 0, 0)
+    titleBar:SetHeight(28)
+    titleBar:SetColorTexture(unpack(COLORS.bgMedium))
+    self.mainFrame.titleBar = titleBar
+
+    -- Title bar bottom border
+    local titleBorder = self.mainFrame:CreateTexture(nil, "ARTWORK")
+    titleBorder:SetPoint("TOPLEFT", titleBar, "BOTTOMLEFT", 0, 0)
+    titleBorder:SetPoint("TOPRIGHT", titleBar, "BOTTOMRIGHT", 0, 0)
+    titleBorder:SetHeight(1)
+    titleBorder:SetColorTexture(unpack(COLORS.border))
+
+    -- Make title bar draggable
     self.mainFrame:RegisterForDrag("LeftButton")
-    self.mainFrame:SetScript("OnDragStart", self.mainFrame.StartMoving)
-    self.mainFrame:SetScript("OnDragStop", self.mainFrame.StopMovingOrSizing)
+    self.mainFrame:SetScript("OnDragStart", function(frame)
+        frame:StartMoving()
+    end)
+    self.mainFrame:SetScript("OnDragStop", function(frame)
+        frame:StopMovingOrSizing()
+        GB:SaveWindowPosition()
+    end)
 
-    self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    self.mainFrame.title:SetPoint("LEFT", self.mainFrame.TitleBg, "LEFT", 5, 0)
+    -- Title text
+    self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    self.mainFrame.title:SetPoint("LEFT", titleBar, "LEFT", 12, 0)
     self.mainFrame.title:SetText("Guild Bridge")
+    self.mainFrame.title:SetTextColor(unpack(COLORS.textHighlight))
 
-    -- Create native WoW-style page tabs at the bottom
+    -- Close button (custom styled)
+    local closeBtn = CreateFrame("Button", nil, self.mainFrame)
+    closeBtn:SetSize(20, 20)
+    closeBtn:SetPoint("TOPRIGHT", -6, -4)
+    closeBtn:SetNormalTexture("Interface\\Buttons\\UI-StopButton")
+    closeBtn:SetHighlightTexture("Interface\\Buttons\\UI-StopButton")
+    closeBtn:GetHighlightTexture():SetVertexColor(1, 0.3, 0.3, 0.8)
+    closeBtn:SetScript("OnClick", function()
+        GB.mainFrame:Hide()
+    end)
+    closeBtn:SetScript("OnEnter", function(self)
+        self:GetNormalTexture():SetVertexColor(1, 0.5, 0.5)
+    end)
+    closeBtn:SetScript("OnLeave", function(self)
+        self:GetNormalTexture():SetVertexColor(1, 1, 1)
+    end)
+
+    -- Resize grip (bottom-right corner)
+    local resizeGrip = CreateFrame("Button", nil, self.mainFrame)
+    resizeGrip:SetSize(16, 16)
+    resizeGrip:SetPoint("BOTTOMRIGHT", -2, 2)
+    resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+    resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+    resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+    resizeGrip:SetScript("OnMouseDown", function()
+        GB.mainFrame:StartSizing("BOTTOMRIGHT")
+    end)
+    resizeGrip:SetScript("OnMouseUp", function()
+        GB.mainFrame:StopMovingOrSizing()
+        GB:SaveWindowPosition()
+        GB:RebuildTabs()  -- Recalculate tab layout
+    end)
+    self.mainFrame.resizeGrip = resizeGrip
+
+    -- Handle resize events
+    self.mainFrame:SetScript("OnSizeChanged", function(frame, width, height)
+        -- Update scroll frame bottom anchor
+        if GB.scrollFrame then
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -12, 42)
+        end
+    end)
+
+    -- Create page tabs
     createPageTabs()
 
+    -- Build guild filter tabs
     self:RebuildTabs()
 
+    -- Options row (mute checkbox, filter checkbox) - moved to be more subtle
     self.muteCheckbox = CreateFrame("CheckButton", nil, self.mainFrame, "UICheckButtonTemplate")
-    self.muteCheckbox:SetSize(24, 24)
-    self.muteCheckbox:SetPoint("TOPRIGHT", self.mainFrame, "TOPRIGHT", -10, -22)
-    self.muteCheckbox.text = self.muteCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    self.muteCheckbox:SetSize(20, 20)
+    self.muteCheckbox:SetPoint("TOPRIGHT", self.mainFrame, "TOPRIGHT", -30, -5)
+    self.muteCheckbox.text = self.muteCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
     self.muteCheckbox.text:SetPoint("RIGHT", self.muteCheckbox, "LEFT", -2, 0)
-    self.muteCheckbox.text:SetText("Mute Send")
+    self.muteCheckbox.text:SetText("Mute")
+    self.muteCheckbox.text:SetTextColor(unpack(COLORS.textMuted))
     self.muteCheckbox:SetChecked(GuildBridgeDB.muteSend or false)
     self.muteCheckbox:SetScript("OnClick", function(checkbox)
         GuildBridgeDB.muteSend = checkbox:GetChecked()
     end)
-
-    local filterChatCheckbox = CreateFrame("CheckButton", nil, self.mainFrame, "UICheckButtonTemplate")
-    filterChatCheckbox:SetSize(24, 24)
-    filterChatCheckbox:SetPoint("RIGHT", self.muteCheckbox.text, "LEFT", -10, 0)
-    filterChatCheckbox.text = filterChatCheckbox:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    filterChatCheckbox.text:SetPoint("RIGHT", filterChatCheckbox, "LEFT", -2, 0)
-    filterChatCheckbox.text:SetText("Filter Native Chat Also")
-    filterChatCheckbox:SetChecked(GuildBridgeDB.filterNativeChat or false)
-    filterChatCheckbox:SetScript("OnClick", function(checkbox)
-        GuildBridgeDB.filterNativeChat = checkbox:GetChecked()
+    self.muteCheckbox:SetScript("OnEnter", function()
+        GameTooltip:SetOwner(GB.muteCheckbox, "ANCHOR_BOTTOM")
+        GameTooltip:SetText("Mute outgoing bridge messages from you")
+        GameTooltip:Show()
+    end)
+    self.muteCheckbox:SetScript("OnLeave", function()
+        GameTooltip:Hide()
     end)
 
+    -- Scroll frame for messages with modern styling
     self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
-    self.scrollFrame:SetPoint("TOPLEFT", 10, -90)  -- Default: page tabs (28) + 1 row of guild filter tabs (38) + title bar (24)
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
+    self.scrollFrame:SetPoint("TOPLEFT", 12, -94)
+    self.scrollFrame:SetPoint("BOTTOMRIGHT", -12, 42)
     self.scrollFrame:SetFontObject(GameFontHighlightSmall)
     self.scrollFrame:SetJustifyH("LEFT")
     self.scrollFrame:SetFading(false)
     self.scrollFrame:SetMaxLines(500)
     self.scrollFrame:EnableMouseWheel(true)
     self.scrollFrame:SetHyperlinksEnabled(true)
-    self.scrollFrame:SetScript("OnMouseWheel", function(scrollFrame, delta)
+    self.scrollFrame:SetIndentedWordWrap(true)
+
+    -- Scroll frame background (subtle)
+    local scrollBg = self.scrollFrame:CreateTexture(nil, "BACKGROUND")
+    scrollBg:SetAllPoints()
+    scrollBg:SetColorTexture(0, 0, 0, 0.2)
+
+    self.scrollFrame:SetScript("OnMouseWheel", function(frame, delta)
         if delta > 0 then
-            scrollFrame:ScrollUp()
-        elseif delta < 0 then
-            scrollFrame:ScrollDown()
+            for i = 1, 3 do frame:ScrollUp() end
+        else
+            for i = 1, 3 do frame:ScrollDown() end
         end
     end)
-    self.scrollFrame:SetScript("OnHyperlinkClick", function(scrollFrame, link, text, button)
+    self.scrollFrame:SetScript("OnHyperlinkClick", function(frame, link, text, button)
         SetItemRef(link, text, button)
     end)
 
-    self.inputBox = CreateFrame("EditBox", nil, self.mainFrame, "InputBoxTemplate")
-    self.inputBox:SetPoint("BOTTOMLEFT", 10, 10)
-    self.inputBox:SetPoint("BOTTOMRIGHT", -10, 10)
-    self.inputBox:SetHeight(20)
+    -- Input box with modern styling
+    local inputBg = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
+    inputBg:SetPoint("BOTTOMLEFT", 10, 8)
+    inputBg:SetPoint("BOTTOMRIGHT", -10, 8)
+    inputBg:SetHeight(26)
+    inputBg:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    inputBg:SetBackdropColor(unpack(COLORS.inputBg))
+    inputBg:SetBackdropBorderColor(unpack(COLORS.border))
+    self.mainFrame.inputBg = inputBg
+
+    self.inputBox = CreateFrame("EditBox", nil, inputBg)
+    self.inputBox:SetPoint("TOPLEFT", 8, -4)
+    self.inputBox:SetPoint("BOTTOMRIGHT", -8, 4)
     self.inputBox:SetAutoFocus(false)
-    self.inputBox:SetFontObject(GameFontHighlightSmall)
+    self.inputBox:SetFontObject(ChatFontNormal)
+    self.inputBox:SetTextColor(unpack(COLORS.textNormal))
 
     self.inputBox:SetScript("OnEnterPressed", function(inputBox)
         local text = inputBox:GetText()
-        GB:SendFromUI(text)
-        inputBox:SetText("")
+        if text and text ~= "" then
+            GB:SendFromUI(text)
+            inputBox:SetText("")
+        end
     end)
 
     self.inputBox:SetScript("OnEscapePressed", function(inputBox)
         inputBox:ClearFocus()
     end)
 
+    -- Focus highlight for input
+    self.inputBox:SetScript("OnEditFocusGained", function()
+        inputBg:SetBackdropBorderColor(COLORS.accent[1], COLORS.accent[2], COLORS.accent[3], 0.8)
+    end)
+    self.inputBox:SetScript("OnEditFocusLost", function()
+        inputBg:SetBackdropBorderColor(unpack(COLORS.border))
+    end)
+
+    -- Restore saved position and size
+    self:RestoreWindowPosition()
+
+    -- Start hidden
     self.mainFrame:Hide()
+
+    -- Save position when hiding
+    self.mainFrame:SetScript("OnHide", function()
+        GB:SaveWindowPosition()
+    end)
 end
 
 -- Toggle bridge frame visibility

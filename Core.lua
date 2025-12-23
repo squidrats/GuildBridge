@@ -109,8 +109,39 @@ function GB:EnsureSavedVariables()
     if GuildBridgeDB.registeredAlts == nil then
         GuildBridgeDB.registeredAlts = {}
     end
+    -- Window position and size
+    if GuildBridgeDB.windowPos == nil then
+        GuildBridgeDB.windowPos = {}
+    end
     self.knownGuilds = GuildBridgeDB.knownGuilds
     self.registeredAlts = GuildBridgeDB.registeredAlts
+end
+
+-- Save window position and size
+function GB:SaveWindowPosition()
+    if not self.mainFrame then return end
+    local point, _, relPoint, x, y = self.mainFrame:GetPoint()
+    GuildBridgeDB.windowPos = {
+        point = point,
+        relPoint = relPoint,
+        x = x,
+        y = y,
+        width = self.mainFrame:GetWidth(),
+        height = self.mainFrame:GetHeight(),
+    }
+end
+
+-- Restore window position and size
+function GB:RestoreWindowPosition()
+    if not self.mainFrame then return end
+    local pos = GuildBridgeDB.windowPos
+    if pos and pos.point then
+        self.mainFrame:ClearAllPoints()
+        self.mainFrame:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
+    end
+    if pos and pos.width and pos.height then
+        self.mainFrame:SetSize(pos.width, pos.height)
+    end
 end
 
 -- Create a filter key from guild name and realm
