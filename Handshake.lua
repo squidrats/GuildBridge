@@ -186,6 +186,138 @@ function GB:SendHandshakeToFriend(gameAccountID)
     pcall(BNSendGameData, gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
 end
 
+-- ============================================================================
+-- WHISPER-BASED HANDSHAKE FOR SAME-ACCOUNT ALTS
+-- BNSendGameData only works between different Battle.net accounts.
+-- For same-account alts (different WoW licenses on same Battle.net), we use
+-- addon whispers via C_ChatInfo.SendAddonMessage with WHISPER channel.
+-- ============================================================================
+
+-- Send whisper handshake to registered alts
+local function doSendWhisperHandshake(handshakeType, targetName)
+    local myGuildName = GetGuildInfo("player")
+    if not myGuildName or not GB.allowedGuilds[myGuildName] then
+        return
+    end
+
+    local myRealm = GetRealmName()
+    local guildHomeRealm = GB:GetGuildHomeRealm()
+    local guildClubId = getGuildClubId()
+
+    if not guildHomeRealm then
+        return
+    end
+
+    -- Format: [GBWHS]TYPE|guildName|playerRealm|guildHomeRealm|guildClubId
+    local payload = "[GBWHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
+
+    if targetName then
+        -- Send to specific alt
+        C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, payload, "WHISPER", targetName)
+    else
+        -- Broadcast to all registered alts
+        for altName, _ in pairs(GB.registeredAlts or {}) do
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+        end
+    end
+end
+
+-- Send whisper handshake to all registered alts (throttled)
+function GB:SendWhisperHandshake()
+    local now = GetTime()
+    if now - self.lastWhisperHandshakeTime < self.HANDSHAKE_THROTTLE then
+        return  -- Throttled
+    end
+    self.lastWhisperHandshakeTime = now
+    doSendWhisperHandshake("HELLO")
+end
+
+-- Force send whisper handshake without throttle
+function GB:ForceSendWhisperHandshake()
+    self.lastWhisperHandshakeTime = 0
+    self:SendWhisperHandshake()
+end
+
+-- Send whisper handshake to a specific alt
+function GB:SendWhisperHandshakeToAlt(altName)
+    local myGuildName = GetGuildInfo("player")
+    if not myGuildName or not self.allowedGuilds[myGuildName] then
+        return
+    end
+    doSendWhisperHandshake("HELLO", altName)
+end
+
+-- Handle incoming whisper handshake messages
+function GB:HandleWhisperHandshakeMessage(message, senderName)
+    if not message or message:sub(1, 7) ~= "[GBWHS]" then
+        return false
+    end
+
+    local data = message:sub(8)
+
+    -- Handle LEAVE message
+    if data == "LEAVE" then
+        self.connectedWhisperAlts[senderName] = nil
+        self:UpdateConnectionIndicators()
+        if self.currentPage == "status" then
+            self:RefreshMessages()
+        end
+        return true
+    end
+
+    -- Format: TYPE|guildName|playerRealm|guildHomeRealm|guildClubId
+    local handshakeType, guildName, realmName, guildHomeRealm, guildClubId = data:match("([^|]+)|([^|]+)|([^|]*)|([^|]*)|?(.*)$")
+
+    if not guildHomeRealm or guildHomeRealm == "" then
+        guildHomeRealm = realmName
+    end
+
+    if not handshakeType or not guildName then
+        return true -- It was a handshake message, just malformed
+    end
+
+    -- Only track if it's an allowed guild
+    if not self.allowedGuilds[guildName] then
+        return true
+    end
+
+    if guildClubId == "" then guildClubId = nil end
+
+    -- Record this whisper alt connection
+    self.connectedWhisperAlts[senderName] = {
+        guildName = guildName,
+        realmName = realmName,
+        guildHomeRealm = guildHomeRealm,
+        guildClubId = guildClubId,
+        lastSeen = GetTime(),
+    }
+
+    -- Register guild so it appears in tabs
+    self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
+
+    -- Update indicators
+    self:UpdateConnectionIndicators()
+
+    if self.currentPage == "status" then
+        self:RefreshMessages()
+    end
+
+    -- If they sent HELLO, respond with PONG
+    if handshakeType == "HELLO" then
+        doSendWhisperHandshake("PONG", senderName)
+    end
+
+    return true
+end
+
+-- Send leave notification via whisper to registered alts
+function GB:SendWhisperLeaveNotification()
+    local payload = "[GBWHS]LEAVE"
+    for altName, _ in pairs(self.registeredAlts or {}) do
+        C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+    end
+end
+
 -- Update connection status from a received bridge message
 -- This keeps connections "alive" even without explicit handshakes
 function GB:UpdateConnectionFromMessage(senderGameAccountID, guildName, guildHomeRealm, realmName, guildClubId)

@@ -445,8 +445,19 @@ updatePageVisibility = function()
             local maxWidth = GB.mainFrame:GetWidth() - 16
             local guildCount = 1  -- Start with 1 for "All" tab
             local myGuildName = GetGuildInfo("player")
+            -- Get my guild's filterKey to exclude it properly
+            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+            local myGuildHomeRealm = GB:GetGuildHomeRealm()
+            local myFilterKey = nil
+            if myGuildName then
+                if myGuildClubId then
+                    myFilterKey = myGuildName .. "-" .. myGuildClubId
+                elseif myGuildHomeRealm then
+                    myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+                end
+            end
             for filterKey, info in pairs(GB.knownGuilds) do
-                if info.guildName ~= myGuildName then
+                if filterKey ~= myFilterKey then
                     guildCount = guildCount + 1
                 end
             end
@@ -493,8 +504,21 @@ function GB:RebuildTabs()
     self.tabButtons.all = createTab(self.mainFrame, "All", nil, nil, xOffset, yOffset, nil, tabWidth)
     xOffset = xOffset + tabWidth + tabSpacing
 
+    -- Get my guild's filterKey to exclude it (not just guild name, since same-name guilds can exist)
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myGuildHomeRealm = self:GetGuildHomeRealm()
+    local myFilterKey = nil
+    if myGuildName then
+        if myGuildClubId then
+            myFilterKey = myGuildName .. "-" .. myGuildClubId
+        elseif myGuildHomeRealm then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
+    end
+
     for filterKey, info in pairs(self.knownGuilds) do
-        if info.guildName ~= myGuildName then
+        -- Skip my own guild (by filterKey, not just name - same-name guilds on different servers are different)
+        if filterKey ~= myFilterKey then
             -- Check if we need to wrap to next row
             if xOffset + tabWidth > maxWidth then
                 xOffset = 8

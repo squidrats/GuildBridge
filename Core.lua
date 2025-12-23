@@ -20,8 +20,10 @@ GB.knownGuilds = {}           -- Track unique guild+realm combinations
 GB.recentMessages = {}        -- Hash -> timestamp for deduplication
 GB.onlineFriends = {}         -- Track online friends
 GB.connectedBridgeUsers = {}  -- gameAccountID -> { guildName, realmName, guildHomeRealm, lastSeen }
+GB.connectedWhisperAlts = {}  -- "Name-Realm" -> { guildName, guildHomeRealm, lastSeen }
 GB.lastGuildActivity = {}     -- filterKey -> last message timestamp
 GB.lastHandshakeTime = 0      -- Throttle handshake sending
+GB.lastWhisperHandshakeTime = 0 -- Throttle whisper handshake sending
 GB.guildChatFrames = {}       -- Track which chat frames have guild chat enabled
 
 -- UI references (populated by UI module)
@@ -83,7 +85,12 @@ function GB:EnsureSavedVariables()
     if GuildBridgeDB.knownGuilds == nil then
         GuildBridgeDB.knownGuilds = {}
     end
+    -- Registered alts for same-account communication (Name-Realm format)
+    if GuildBridgeDB.registeredAlts == nil then
+        GuildBridgeDB.registeredAlts = {}
+    end
     self.knownGuilds = GuildBridgeDB.knownGuilds
+    self.registeredAlts = GuildBridgeDB.registeredAlts
 end
 
 -- Create a filter key from guild name and realm

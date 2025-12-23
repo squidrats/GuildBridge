@@ -12,11 +12,19 @@ local function getGuildClubId()
 end
 
 -- Register a guild (for tracking discovered guilds)
--- guildClubId is the unique identifier for guilds
+-- guildClubId is the preferred unique identifier, falls back to guildHomeRealm
 function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
-    if not guildName or not guildClubId then return end
+    if not guildName then return nil end
 
-    local filterKey = guildName .. "-" .. guildClubId
+    -- Normalize empty strings to nil
+    if guildClubId == "" then guildClubId = nil end
+    if guildHomeRealm == "" then guildHomeRealm = nil end
+
+    -- Use clubId if available, otherwise fall back to homeRealm
+    local uniqueId = guildClubId or guildHomeRealm
+    if not uniqueId then return nil end
+
+    local filterKey = guildName .. "-" .. uniqueId
 
     if not self.knownGuilds[filterKey] then
         self.knownGuilds[filterKey] = {
@@ -43,9 +51,13 @@ end
 
 -- Add a bridge message to the display
 -- Now includes class color support and proper realm display for cross-realm invites
-function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, senderRealm, guildHomeRealm, classFile, guildClubId)
+-- displayInTargetTab: if set, use this filterKey for display instead of the sender's guild
+function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, senderRealm, guildHomeRealm, classFile, guildClubId, displayInTargetTab)
     -- Use guildClubId or guildHomeRealm as the unique key to distinguish same-name guilds
     local filterKey = self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
+
+    -- If this is a UI message targeted to another guild, display under that tab instead
+    local displayFilterKey = displayInTargetTab or filterKey
 
     local short = self.guildShortNames[guildName] or guildName or ""
     -- Get the manually set realm for display, or use guildHomeRealm
@@ -82,52 +94,48 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     -- Create clickable player link with class color
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. displayName .. "]|r|h"
 
-    local formattedMessage = guildTag .. senderLink .. ": " .. messageText
+    -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
+    local formattedWithTag = guildTag .. senderLink .. ": " .. messageText
+    local formattedNoTag = senderLink .. ": " .. messageText
 
     -- Record activity for connection indicator
-    self:RecordGuildActivity(filterKey)
+    self:RecordGuildActivity(displayFilterKey)
 
     table.insert(self.messageHistory, {
         guildName = guildName,
         guildHomeRealm = guildHomeRealm,
-        filterKey = filterKey,
-        formatted = formattedMessage,
+        filterKey = displayFilterKey,
+        formatted = formattedWithTag,      -- Full format with guild tag
+        formattedNoTag = formattedNoTag,   -- Simple format without guild tag
     })
     if #self.messageHistory > 500 then
         table.remove(self.messageHistory, 1)
     end
 
-    if self.scrollFrame and self.currentPage == "chat" and (self.currentFilter == nil or filterKey == self.currentFilter) then
-        self.scrollFrame:AddMessage(formattedMessage)
+    if self.scrollFrame and self.currentPage == "chat" and (self.currentFilter == nil or displayFilterKey == self.currentFilter) then
+        -- Use format without tag when viewing a specific guild's tab
+        local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
+        self.scrollFrame:AddMessage(displayMsg)
     end
 
     -- Only show in native chat if filter is off, or if message matches the current filter
-    -- Send to all chat frames that have guild chat enabled (follows guild chat window settings)
-    if not GuildBridgeDB.filterNativeChat or self.currentFilter == nil or filterKey == self.currentFilter then
-        self:AddMessageToGuildChatFrames(formattedMessage, 0.25, 1.0, 0.25)
+    -- Native chat always shows the full format with guild tag
+    -- Only show in native chat if the message is from a guild the player is actually in
+    local myGuildName = GetGuildInfo("player")
+    if myGuildName and guildName == myGuildName then
+        if not GuildBridgeDB.filterNativeChat or self.currentFilter == nil or displayFilterKey == self.currentFilter then
+            self:AddMessageToGuildChatFrames(formattedWithTag, 0.25, 1.0, 0.25)
+        end
     end
 end
 
--- Send bridge payload to all online friends
-function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
-    if not messageText or messageText == "" then
-        return
-    end
-
-    -- Get current online friends
-    if #self.onlineFriends == 0 then
-        self.onlineFriends = self:FindOnlineWoWFriends()
-    end
-
-    if #self.onlineFriends == 0 then
-        return
-    end
-
+-- Build a bridge payload string
+local function buildBridgePayload(GB, originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
     sourceType = sourceType or "U"
 
     local guildName = overrideGuild or GetGuildInfo("player")
     local guildRealm = overrideGuildRealm or GetRealmName()
-    local guildHomeRealm = overrideGuildHomeRealm or self:GetGuildHomeRealm() or guildRealm
+    local guildHomeRealm = overrideGuildHomeRealm or GB:GetGuildHomeRealm() or guildRealm
     local guildClubId = overrideGuildClubId or getGuildClubId()
     local factionGroup = select(1, UnitFactionGroup("player")) or "Unknown"
 
@@ -137,7 +145,7 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
     end
 
     -- Payload format: [GB]guildName|guildRealm|faction|originName|originRealm|sourceType|targetFilter|messageId|guildHomeRealm|classFile|guildClubId|message
-    local payload = self.BRIDGE_PAYLOAD_PREFIX
+    local payload = GB.BRIDGE_PAYLOAD_PREFIX
         .. (guildName or "")
         .. "|"
         .. (guildRealm or "")
@@ -162,11 +170,62 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
         .. "|"
         .. messageText
 
+    return payload
+end
+
+-- Send bridge payload to all online friends
+function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
+    if not messageText or messageText == "" then
+        return
+    end
+
+    -- Get current online friends
+    if #self.onlineFriends == 0 then
+        self.onlineFriends = self:FindOnlineWoWFriends()
+    end
+
+    if #self.onlineFriends == 0 then
+        return
+    end
+
+    local payload = buildBridgePayload(self, originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
+
     -- Send to all online WoW friends
     for _, friend in ipairs(self.onlineFriends) do
         local ok, err = pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
         if not ok then
             print("GuildBridge: error sending to", friend.characterName or "unknown", ":", err)
+        end
+    end
+end
+
+-- Send bridge payload via whisper to registered alts (for same-account communication)
+-- excludeSender is optional - if provided, skip that alt (to avoid echo)
+function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId, excludeSender)
+    if not messageText or messageText == "" then
+        return
+    end
+
+    -- Only send to connected whisper alts
+    local now = GetTime()
+    local hasAlts = false
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 and altName ~= excludeSender then
+            hasAlts = true
+            break
+        end
+    end
+
+    if not hasAlts then
+        return
+    end
+
+    local payload = buildBridgePayload(self, originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
+
+    -- Send to all connected whisper alts
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 and altName ~= excludeSender then
+            C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
         end
     end
 end
@@ -216,20 +275,30 @@ function GB:SendFromUI(messageText)
     local fullName = originName .. "-" .. originRealm
     local classColor = self:GetClassColor(originName, originRealm)
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. originName .. "]|r|h"
-    local formattedMessage = guildTag .. senderLink .. ": " .. messageText
+
+    -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
+    local formattedWithTag = guildTag .. senderLink .. ": " .. messageText
+    local formattedNoTag = senderLink .. ": " .. messageText
+
+    -- If we have a target filter, the message should show under that guild's tab
+    -- (since we're sending TO that guild), otherwise use our own guild
+    local displayFilterKey = targetFilter or filterKey
 
     table.insert(self.messageHistory, {
         guildName = playerGuildName,
         guildHomeRealm = playerGuildHomeRealm,
-        filterKey = filterKey,
-        formatted = formattedMessage,
+        filterKey = displayFilterKey,  -- Use target filter if set
+        formatted = formattedWithTag,
+        formattedNoTag = formattedNoTag,
     })
     if #self.messageHistory > 500 then
         table.remove(self.messageHistory, 1)
     end
 
-    if self.scrollFrame and (self.currentFilter == nil or filterKey == self.currentFilter) then
-        self.scrollFrame:AddMessage(formattedMessage)
+    if self.scrollFrame and (self.currentFilter == nil or displayFilterKey == self.currentFilter) then
+        -- Use format without tag when viewing a specific guild's tab
+        local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
+        self.scrollFrame:AddMessage(displayMsg)
     end
 
     -- Record hash so we don't display it again when it comes back
@@ -237,6 +306,7 @@ function GB:SendFromUI(messageText)
     self:IsDuplicateMessage(hash)  -- This records the hash
 
     self:SendBridgePayload(originName, originRealm, messageText, "U", targetFilter, nil, nil, nil, nil, classFile)
+    self:SendWhisperBridgePayload(originName, originRealm, messageText, "U", targetFilter, nil, nil, nil, nil, classFile)
 end
 
 -- Handle guild chat message (from own guild)
@@ -296,20 +366,26 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     end
 
     local senderLink = "|Hplayer:" .. fullName .. "|h|cff" .. classColor .. "[" .. displayName .. "]|r|h"
-    local formattedMessage = guildTag .. senderLink .. ": " .. text
+
+    -- Store both formats: with guild tag (for "All" view) and without (for filtered view)
+    local formattedWithTag = guildTag .. senderLink .. ": " .. text
+    local formattedNoTag = senderLink .. ": " .. text
 
     table.insert(self.messageHistory, {
         guildName = myGuildName,
         guildHomeRealm = myGuildHomeRealm,
         filterKey = filterKey,
-        formatted = formattedMessage,
+        formatted = formattedWithTag,
+        formattedNoTag = formattedNoTag,
     })
     if #self.messageHistory > 500 then
         table.remove(self.messageHistory, 1)
     end
 
     if self.scrollFrame and (self.currentFilter == nil or filterKey == self.currentFilter) then
-        self.scrollFrame:AddMessage(formattedMessage)
+        -- Use format without tag when viewing a specific guild's tab
+        local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
+        self.scrollFrame:AddMessage(displayMsg)
     end
 
     if not GuildBridgeDB.bridgeEnabled then
@@ -330,6 +406,7 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     end
 
     self:SendBridgePayload(originName, originRealm, text, "G", nil, nil, nil, nil, nil, classFile)
+    self:SendWhisperBridgePayload(originName, originRealm, text, "G", nil, nil, nil, nil, nil, classFile)
 end
 
 -- Handle incoming BN addon message (bridge message from another player)
@@ -418,15 +495,25 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         return
     end
 
-    -- If message has a target filter, only process if we match
+    -- If message has a target filter, handle based on source type
+    -- "G" (guild chat) messages with target: only accept if we're in that guild
+    -- "U" (UI) messages with target: display in that guild's tab for everyone (cross-guild messaging)
+    local displayInTargetTab = nil
     if targetPart and targetPart ~= "" then
         local myGuildName = GetGuildInfo("player")
+        local myGuildClubId = getGuildClubId()
         local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
-        local myFilterKey = myGuildName
-        if myGuildHomeRealm and myGuildHomeRealm ~= "" then
-            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
-        end
-        if myFilterKey ~= targetPart then
+        -- Build possible filter keys (clubId-based or realm-based)
+        local myFilterKeyClub = myGuildName and myGuildClubId and (myGuildName .. "-" .. myGuildClubId)
+        local myFilterKeyRealm = myGuildName and myGuildHomeRealm and (myGuildName .. "-" .. myGuildHomeRealm)
+        local isTargetedAtMe = (targetPart == myFilterKeyClub or targetPart == myFilterKeyRealm)
+
+        if sourcePart == "U" then
+            -- UI messages: display in the target guild's tab for everyone
+            -- The message should appear under the targeted guild's tab, not the sender's guild
+            displayInTargetTab = targetPart
+        elseif not isTargetedAtMe then
+            -- Guild chat messages targeted elsewhere - skip
             return
         end
     end
@@ -435,12 +522,115 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     self:UpdateConnectionFromMessage(senderID, guildPart, guildHomeRealmPart, guildRealmPart, guildClubIdPart)
 
     -- Display the message (pass guildHomeRealm, classFile, and guildClubId for proper filtering and coloring)
-    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+    -- If this is a UI message targeted to another guild, display under that guild's tab
+    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, displayInTargetTab)
 
     -- Re-relay to other friends (mesh network) - only for guild chat messages ("G")
     -- Don't re-relay UI messages ("U") or already-relayed messages ("R")
     if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
         self:SendBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+    end
+end
+
+-- Handle incoming whisper addon message (from same-account alts)
+function GB:HandleWhisperAddonMessage(prefix, message, sender)
+    if prefix ~= self.BRIDGE_ADDON_PREFIX then
+        return
+    end
+
+    -- Check for whisper handshake messages first
+    if self:HandleWhisperHandshakeMessage(message, sender) then
+        return
+    end
+
+    local text = message
+    if not text or text:sub(1, #self.BRIDGE_PAYLOAD_PREFIX) ~= self.BRIDGE_PAYLOAD_PREFIX then
+        return
+    end
+
+    -- Parse payload (same format as BNet messages)
+    local payload = text:sub(#self.BRIDGE_PAYLOAD_PREFIX + 1)
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart
+
+    -- New format with guildClubId
+    guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    -- Fallback formats (same as BNet handler)
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        guildClubIdPart = nil
+    end
+
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        classFilePart = nil
+        guildClubIdPart = nil
+    end
+
+    if not messagePart or not originPart or not sourcePart then
+        return
+    end
+
+    -- Clean up empty strings
+    if guildPart == "" then guildPart = nil end
+    if guildRealmPart == "" then guildRealmPart = nil end
+    if originRealmPart == "" then originRealmPart = nil end
+    if targetPart == "" then targetPart = nil end
+    if messageIdPart == "" then messageIdPart = nil end
+    if guildHomeRealmPart == "" then guildHomeRealmPart = nil end
+    if classFilePart == "" then classFilePart = nil end
+    if guildClubIdPart == "" then guildClubIdPart = nil end
+
+    if not guildHomeRealmPart then
+        guildHomeRealmPart = guildRealmPart
+    end
+
+    -- Only accept messages from allowed guilds
+    if guildPart and not self.allowedGuilds[guildPart] then
+        return
+    end
+
+    -- If message has a target filter, handle based on source type
+    local displayInTargetTab = nil
+    if targetPart and targetPart ~= "" then
+        local myGuildName = GetGuildInfo("player")
+        local myGuildClubId = getGuildClubId()
+        local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
+        -- Build possible filter keys (clubId-based or realm-based)
+        local myFilterKeyClub = myGuildName and myGuildClubId and (myGuildName .. "-" .. myGuildClubId)
+        local myFilterKeyRealm = myGuildName and myGuildHomeRealm and (myGuildName .. "-" .. myGuildHomeRealm)
+        local isTargetedAtMe = (targetPart == myFilterKeyClub or targetPart == myFilterKeyRealm)
+
+        if sourcePart == "U" then
+            -- UI messages: display in the target guild's tab for everyone
+            displayInTargetTab = targetPart
+        elseif not isTargetedAtMe then
+            -- Guild chat messages targeted elsewhere - skip
+            return
+        end
+    end
+
+    -- Check for duplicate
+    local hash = self:MakeMessageHash(guildPart or "", originPart, originRealmPart or "", messagePart)
+    if self:IsDuplicateMessage(hash) then
+        return
+    end
+
+    -- Update whisper alt connection status
+    if self.connectedWhisperAlts[sender] then
+        self.connectedWhisperAlts[sender].lastSeen = GetTime()
+    end
+
+    -- Display the message
+    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, displayInTargetTab)
+
+    -- Re-relay to other friends and alts (mesh network) - only for guild chat messages ("G")
+    if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
+        self:SendBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+        self:SendWhisperBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, sender)
     end
 end
 
@@ -457,7 +647,7 @@ function GB:RefreshMessages()
         local myShort = self.guildShortNames[myGuildName] or myGuildName or "No Guild"
         local now = GetTime()
 
-        -- Collect connection pairs
+        -- Collect connection pairs from BNet friends
         local connections = {}
         for gameAccountID, info in pairs(self.connectedBridgeUsers) do
             if now - info.lastSeen < 300 then
@@ -471,6 +661,25 @@ function GB:RefreshMessages()
                     guildName = info.guildName,
                     guildShort = theirShort,
                     guildHomeRealm = info.guildHomeRealm or info.realmName or "",
+                    connectionType = "bnet",
+                })
+            end
+        end
+
+        -- Also collect connections from whisper alts (same Battle.net account)
+        for altName, info in pairs(self.connectedWhisperAlts) do
+            if now - info.lastSeen < 300 then
+                local charName, charRealm = altName:match("([^%-]+)%-?(.*)")
+                charName = charName or altName
+                charRealm = charRealm or info.realmName or ""
+                local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
+                table.insert(connections, {
+                    charName = charName,
+                    charRealm = charRealm,
+                    guildName = info.guildName,
+                    guildShort = theirShort,
+                    guildHomeRealm = info.guildHomeRealm or info.realmName or "",
+                    connectionType = "whisper",
                 })
             end
         end
@@ -485,7 +694,10 @@ function GB:RefreshMessages()
                 local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
                 local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
 
-                self.scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide)
+                -- Add indicator for whisper (same-account) connections
+                local connIndicator = conn.connectionType == "whisper" and " |cffaaaaaa(alt)|r" or ""
+
+                self.scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide .. connIndicator)
             end
         end
 
@@ -495,7 +707,9 @@ function GB:RefreshMessages()
     -- Normal message display
     for _, msg in ipairs(self.messageHistory) do
         if self.currentFilter == nil or msg.filterKey == self.currentFilter then
-            self.scrollFrame:AddMessage(msg.formatted)
+            -- Use format without guild tag when viewing a specific guild's tab
+            local displayMsg = self.currentFilter and (msg.formattedNoTag or msg.formatted) or msg.formatted
+            self.scrollFrame:AddMessage(displayMsg)
         end
     end
 end

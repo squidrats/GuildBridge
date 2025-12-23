@@ -76,15 +76,45 @@ end
 -- Check if any connected bridge user is in a specific guild
 function GB:HasConnectedUserInGuild(filterKey)
     local now = GetTime()
+
+    -- Check BNet friends
     for gameAccountID, info in pairs(self.connectedBridgeUsers) do
         -- Consider stale after 5 minutes
-        if now - info.lastSeen < 300 and info.guildClubId then
-            local theirFilterKey = info.guildName .. "-" .. info.guildClubId
-            if theirFilterKey == filterKey then
-                return true
+        if now - info.lastSeen < 300 then
+            -- Try matching with clubId first, then homeRealm
+            if info.guildClubId then
+                local theirFilterKey = info.guildName .. "-" .. info.guildClubId
+                if theirFilterKey == filterKey then
+                    return true
+                end
+            end
+            if info.guildHomeRealm then
+                local theirFilterKey = info.guildName .. "-" .. info.guildHomeRealm
+                if theirFilterKey == filterKey then
+                    return true
+                end
             end
         end
     end
+
+    -- Also check whisper alts
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 then
+            if info.guildClubId then
+                local theirFilterKey = info.guildName .. "-" .. info.guildClubId
+                if theirFilterKey == filterKey then
+                    return true
+                end
+            end
+            if info.guildHomeRealm then
+                local theirFilterKey = info.guildName .. "-" .. info.guildHomeRealm
+                if theirFilterKey == filterKey then
+                    return true
+                end
+            end
+        end
+    end
+
     return false
 end
 

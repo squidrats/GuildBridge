@@ -9,6 +9,7 @@ GB.eventFrame:RegisterEvent("PLAYER_LOGIN")
 GB.eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 GB.eventFrame:RegisterEvent("CHAT_MSG_GUILD")
 GB.eventFrame:RegisterEvent("BN_CHAT_MSG_ADDON")
+GB.eventFrame:RegisterEvent("CHAT_MSG_ADDON")  -- For whisper-based addon messages (same-account alts)
 GB.eventFrame:RegisterEvent("BN_FRIEND_INFO_CHANGED")
 GB.eventFrame:RegisterEvent("BN_CONNECTED")
 GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
@@ -28,11 +29,17 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- Periodic handshake every 2 minutes to keep connection status fresh
             C_Timer.NewTicker(120, function()
                 GB:ForceSendHandshake()
+                GB:ForceSendWhisperHandshake()  -- Also ping registered alts
                 -- Clean up stale entries
                 local now = GetTime()
                 for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
                     if now - info.lastSeen > 300 then
                         GB.connectedBridgeUsers[gameAccountID] = nil
+                    end
+                end
+                for altName, info in pairs(GB.connectedWhisperAlts) do
+                    if now - info.lastSeen > 300 then
+                        GB.connectedWhisperAlts[altName] = nil
                     end
                 end
                 GB:UpdateConnectionIndicators()
@@ -52,10 +59,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             -- Send handshake after short delay to let everything load
             C_Timer.After(2, function()
                 GB:ForceSendHandshake()
+                GB:ForceSendWhisperHandshake()  -- Also ping registered alts
             end)
             -- Send again after 5 seconds for reliability
             C_Timer.After(7, function()
                 GB:ForceSendHandshake()
+                GB:ForceSendWhisperHandshake()
             end)
         end
 
@@ -104,12 +113,14 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         C_Timer.After(0.5, function()
             local guildName = GetGuildInfo("player")
             if guildName and GB.allowedGuilds[guildName] then
-                -- Joined an allowed guild - send handshake to all friends
+                -- Joined an allowed guild - send handshake to all friends and alts
                 GB:ForceSendHandshake()
+                GB:ForceSendWhisperHandshake()
             else
                 -- Left guild or joined non-allowed guild - notify peers we're gone
                 -- Send a "LEAVE" message so peers remove us from their connections
                 GB:SendLeaveNotification()
+                GB:SendWhisperLeaveNotification()
             end
         end)
 
@@ -120,5 +131,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "BN_CHAT_MSG_ADDON" then
         local prefix, message, _, senderID = ...
         GB:HandleBNAddonMessage(prefix, message, senderID)
+
+    elseif event == "CHAT_MSG_ADDON" then
+        -- Whisper-based addon messages for same-account alts
+        local prefix, message, channel, sender = ...
+        if prefix == GB.BRIDGE_ADDON_PREFIX and channel == "WHISPER" then
+            GB:HandleWhisperAddonMessage(prefix, message, sender)
+        end
     end
 end)
