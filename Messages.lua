@@ -12,40 +12,32 @@ local function getGuildClubId()
 end
 
 -- Register a guild (for tracking discovered guilds)
--- guildClubId is used to uniquely identify guilds with the same name
+-- guildClubId is the unique identifier for guilds
 function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
-    if not guildName then return end
+    if not guildName or not guildClubId then return end
 
-    -- Use guildClubId as primary key if available, otherwise fall back to guildName-guildHomeRealm
-    local filterKey
-    if guildClubId then
-        filterKey = guildName .. "-" .. guildClubId
-    elseif guildHomeRealm and guildHomeRealm ~= "" then
-        filterKey = guildName .. "-" .. guildHomeRealm
-    else
-        filterKey = guildName
-    end
+    local filterKey = guildName .. "-" .. guildClubId
 
     if not self.knownGuilds[filterKey] then
         self.knownGuilds[filterKey] = {
             guildName = guildName,
-            guildHomeRealm = guildHomeRealm,  -- GM's realm = guild's home server
-            guildClubId = guildClubId,        -- Unique guild ID
-            realmName = nil,                  -- Display realm, can be set manually by user
+            guildHomeRealm = guildHomeRealm,
+            guildClubId = guildClubId,
+            realmName = nil,
             manualRealm = false,
         }
         GuildBridgeDB.knownGuilds = self.knownGuilds
+
         -- Rebuild tabs to show the new guild
         if self.RebuildTabs then
             self:RebuildTabs()
         end
-    else
-        -- Update clubId if we didn't have it before
-        if guildClubId and not self.knownGuilds[filterKey].guildClubId then
-            self.knownGuilds[filterKey].guildClubId = guildClubId
-            GuildBridgeDB.knownGuilds = self.knownGuilds
-        end
+    elseif guildHomeRealm and not self.knownGuilds[filterKey].guildHomeRealm then
+        -- Update home realm if we didn't have it
+        self.knownGuilds[filterKey].guildHomeRealm = guildHomeRealm
+        GuildBridgeDB.knownGuilds = self.knownGuilds
     end
+
     return filterKey
 end
 

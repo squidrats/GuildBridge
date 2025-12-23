@@ -78,16 +78,8 @@ function GB:HasConnectedUserInGuild(filterKey)
     local now = GetTime()
     for gameAccountID, info in pairs(self.connectedBridgeUsers) do
         -- Consider stale after 5 minutes
-        if now - info.lastSeen < 300 then
-            -- filterKey can be guildName-guildClubId or guildName-guildHomeRealm
-            local theirFilterKey
-            if info.guildClubId then
-                theirFilterKey = info.guildName .. "-" .. info.guildClubId
-            elseif info.guildHomeRealm and info.guildHomeRealm ~= "" then
-                theirFilterKey = info.guildName .. "-" .. info.guildHomeRealm
-            else
-                theirFilterKey = info.guildName
-            end
+        if now - info.lastSeen < 300 and info.guildClubId then
+            local theirFilterKey = info.guildName .. "-" .. info.guildClubId
             if theirFilterKey == filterKey then
                 return true
             end
