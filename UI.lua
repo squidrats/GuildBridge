@@ -63,8 +63,8 @@ function GB:UpdateConnectionIndicators()
     for _, tab in pairs(self.tabButtons) do
         if tab.statusDot and tab.guildName then
             -- If this tab is my own guild, always show green (I'm always connected to my own guild)
-            -- Check both filterKey match AND guildName match (in case filterKey formats differ)
-            local isMyGuild = (tab.filterValue == myFilterKey) or (myGuildName and tab.guildName == myGuildName)
+            -- Only match on filterKey - guildName alone is not unique (same guild name on different realms)
+            local isMyGuild = (tab.filterValue == myFilterKey)
             if isMyGuild then
                 tab.statusDot:SetColorTexture(0.3, 0.8, 0.3, 1)
             elseif self:HasConnectedUserInGuild(tab.filterValue) then

@@ -212,11 +212,25 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
 
     local payload = buildBridgePayload(self, originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
 
+    -- Get my guild's clubId to skip same-guild recipients for guild messages
+    local myGuildClubId = getGuildClubId()
+
     -- Send to all online WoW friends
     for _, friend in ipairs(self.onlineFriends) do
-        local ok, err = pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
-        if not ok then
-            print("GuildBridge: error sending to", friend.characterName or "unknown", ":", err)
+        -- For guild messages, skip recipients who are in the same guild (they get CHAT_MSG_GUILD directly)
+        local shouldSend = true
+        if sourceType == "G" and myGuildClubId then
+            local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
+            if connInfo and connInfo.guildClubId == myGuildClubId then
+                shouldSend = false
+            end
+        end
+
+        if shouldSend then
+            local ok, err = pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+            if not ok then
+                print("GuildBridge: error sending to", friend.characterName or "unknown", ":", err)
+            end
         end
     end
 end
@@ -228,13 +242,23 @@ function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourc
         return
     end
 
-    -- Only send to connected whisper alts
+    -- Get my guild's clubId to skip same-guild recipients for guild messages
+    local myGuildClubId = getGuildClubId()
+
+    -- Only send to connected whisper alts that aren't in the same guild (for guild messages)
     local now = GetTime()
     local hasAlts = false
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 and altName ~= excludeSender then
-            hasAlts = true
-            break
+            -- For guild messages, skip alts in the same guild (they get CHAT_MSG_GUILD directly)
+            local shouldCount = true
+            if sourceType == "G" and myGuildClubId and info.guildClubId == myGuildClubId then
+                shouldCount = false
+            end
+            if shouldCount then
+                hasAlts = true
+                break
+            end
         end
     end
 
@@ -247,7 +271,14 @@ function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourc
     -- Send to all connected whisper alts
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 and altName ~= excludeSender then
-            C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+            -- For guild messages, skip alts in the same guild (they get CHAT_MSG_GUILD directly)
+            local shouldSend = true
+            if sourceType == "G" and myGuildClubId and info.guildClubId == myGuildClubId then
+                shouldSend = false
+            end
+            if shouldSend then
+                C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+            end
         end
     end
 end

@@ -14,6 +14,7 @@ GB.eventFrame:RegisterEvent("BN_FRIEND_INFO_CHANGED")
 GB.eventFrame:RegisterEvent("BN_CONNECTED")
 GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
 GB.eventFrame:RegisterEvent("PLAYER_LOGOUT")
+GB.eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- For detecting offline alts
 
 -- Track if we've done initial handshake
 local initialHandshakeDone = false
@@ -45,6 +46,19 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
                 GB:UpdateConnectionIndicators()
             end)
+
+            -- More frequent ping for whisper alts (every 30 seconds) since we can't detect their logout
+            C_Timer.NewTicker(30, function()
+                GB:ForceSendWhisperHandshake()
+                -- Shorter stale timeout for whisper alts (90 seconds = 3 missed pings)
+                local now = GetTime()
+                for altName, info in pairs(GB.connectedWhisperAlts) do
+                    if now - info.lastSeen > 90 then
+                        GB.connectedWhisperAlts[altName] = nil
+                    end
+                end
+                GB:UpdateConnectionIndicators()
+            end)
         end
 
     elseif event == "PLAYER_LOGIN" then
@@ -55,6 +69,13 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Good time to refresh friends and send handshake
         GB:UpdateOnlineFriends()
 
+        -- Clear stale whisper alt connections on login/reload
+        -- We can't know if they're still online, so start fresh and let handshakes repopulate
+        for altName, _ in pairs(GB.connectedWhisperAlts) do
+            GB.connectedWhisperAlts[altName] = nil
+        end
+        GB:UpdateConnectionIndicators()
+
         -- Register own guild on login/reload so it appears in the tab list immediately
         C_Timer.After(1, function()
             if IsInGuild() then
@@ -63,6 +84,8 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 local myGuildHomeRealm = GB:GetGuildHomeRealm()
                 if myGuildName and GB.allowedGuilds[myGuildName] and myGuildClubId then
                     GB:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
+                    -- Rebuild tabs after registering own guild to ensure it shows first
+                    GB:RebuildTabs()
                 end
             end
         end)
@@ -157,5 +180,27 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- This ensures they know we're disconnecting
         GB:SendLeaveNotification()
         GB:SendWhisperLeaveNotification()
+
+    elseif event == "CHAT_MSG_SYSTEM" then
+        -- Detect when a whisper alt goes offline
+        -- System messages like "No player named 'X' is currently playing" indicate offline
+        local message = ...
+        if message then
+            -- Check for offline player messages (multiple locales possible)
+            -- English: "No player named 'Name-Realm' is currently playing."
+            -- Also: "Player not found."
+            for altName, _ in pairs(GB.connectedWhisperAlts) do
+                -- Check if this system message mentions our connected alt
+                if message:find(altName, 1, true) then
+                    -- Alt appears to be offline, remove from connections
+                    GB.connectedWhisperAlts[altName] = nil
+                    GB:UpdateConnectionIndicators()
+                    if GB.currentPage == "status" then
+                        GB:RefreshMessages()
+                    end
+                    break
+                end
+            end
+        end
     end
 end)

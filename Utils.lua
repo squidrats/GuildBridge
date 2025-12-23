@@ -97,9 +97,9 @@ function GB:HasConnectedUserInGuild(filterKey)
         end
     end
 
-    -- Also check whisper alts
+    -- Also check whisper alts (shorter timeout since we can't detect their logout reliably)
     for altName, info in pairs(self.connectedWhisperAlts) do
-        if now - info.lastSeen < 300 then
+        if now - info.lastSeen < 90 then
             if info.guildClubId then
                 local theirFilterKey = info.guildName .. "-" .. info.guildClubId
                 if theirFilterKey == filterKey then
