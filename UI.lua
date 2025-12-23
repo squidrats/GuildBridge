@@ -486,7 +486,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
     -- Status indicator dot (for guild tabs) - larger and more visible
     if guildName then
         tab.statusDot = tab:CreateTexture(nil, "OVERLAY")
-        tab.statusDot:SetSize(10, 10)
+        tab.statusDot:SetSize(14, 14)
         tab.statusDot:SetPoint("TOPRIGHT", tab, "TOPRIGHT", -3, -3)
         tab.statusDot:SetTexture("Interface\\COMMON\\Indicator-Green")
         tab.statusDot:SetVertexColor(unpack(COLORS.statusGreen))
@@ -823,16 +823,16 @@ function GB:CreateBridgeUI()
         GB:SaveWindowPosition()
     end)
 
-    -- Guild icon (small green square)
-    local guildIcon = self.mainFrame:CreateTexture(nil, "OVERLAY")
-    guildIcon:SetSize(14, 14)
-    guildIcon:SetPoint("LEFT", titleBar, "LEFT", 10, 0)
-    guildIcon:SetColorTexture(unpack(COLORS.guildGreen))
-    guildIcon:SetAlpha(0.8)
+    -- Horde logo icon
+    local hordeIcon = self.mainFrame:CreateTexture(nil, "OVERLAY")
+    hordeIcon:SetSize(18, 18)
+    hordeIcon:SetPoint("LEFT", titleBar, "LEFT", 8, 0)
+    hordeIcon:SetTexture("Interface\\PVPFrame\\PVP-Currency-Horde")
+    hordeIcon:SetTexCoord(0, 1, 0, 1)
 
     -- Title text - guild green
     self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    self.mainFrame.title:SetPoint("LEFT", guildIcon, "RIGHT", 8, 0)
+    self.mainFrame.title:SetPoint("LEFT", hordeIcon, "RIGHT", 6, 0)
     self.mainFrame.title:SetText("Guild Bridge")
     self.mainFrame.title:SetTextColor(unpack(COLORS.guildGreen))
 
