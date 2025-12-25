@@ -49,6 +49,7 @@ GB.guildShortNames = {
 GB.guildNumbers = {
     ["MAKE DUROTAR GREAT AGAIN-Tichondrius"] = 1,
     ["MAKE DUROTAR GREAT AGAIN-Illidan"] = 3,
+    ["MAKE DUROTAR GREAT AGAIN-Thrall"] = 2,
     ["Bestiez-Tichondrius"] = 2,  -- Example, adjust as needed
 }
 
