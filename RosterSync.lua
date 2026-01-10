@@ -1,4 +1,4 @@
--- GuildBridge Roster Sync Module
+-- MNet Roster Sync Module
 -- Handles roster synchronization between connected bridge users
 
 local addonName, GB = ...

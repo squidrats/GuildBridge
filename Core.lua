@@ -1,14 +1,14 @@
--- GuildBridge Core Module
+-- MNet Core Module
 -- Initializes the addon namespace and shared data structures
 
 local addonName, GB = ...
 
 -- Export addon namespace globally for other modules
-GuildBridge = GB
+MNet = GB
 
 -- Constants
 GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
-GB.BRIDGE_ADDON_PREFIX = "GuildBridge"
+GB.BRIDGE_ADDON_PREFIX = "MNet"
 GB.MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 GB.HANDSHAKE_THROTTLE = 10    -- seconds
 GB.SEND_THROTTLE_DELAY = 0.15  -- seconds between outgoing messages (prevents disconnect)
@@ -106,38 +106,38 @@ GB.classColors = {
 
 -- Initialize saved variables
 function GB:EnsureSavedVariables()
-    if not GuildBridgeDB then
-        GuildBridgeDB = {}
+    if not MNetDB then
+        MNetDB = {}
     end
-    if GuildBridgeDB.bridgeEnabled == nil then
-        GuildBridgeDB.bridgeEnabled = true
+    if MNetDB.bridgeEnabled == nil then
+        MNetDB.bridgeEnabled = true
     end
-    if GuildBridgeDB.muteSend == nil then
-        GuildBridgeDB.muteSend = false
+    if MNetDB.muteSend == nil then
+        MNetDB.muteSend = false
     end
-    if GuildBridgeDB.filterNativeChat == nil then
-        GuildBridgeDB.filterNativeChat = false
+    if MNetDB.filterNativeChat == nil then
+        MNetDB.filterNativeChat = false
     end
-    if GuildBridgeDB.knownGuilds == nil then
-        GuildBridgeDB.knownGuilds = {}
+    if MNetDB.knownGuilds == nil then
+        MNetDB.knownGuilds = {}
     end
     -- Registered alts for same-account communication (Name-Realm format)
-    if GuildBridgeDB.registeredAlts == nil then
-        GuildBridgeDB.registeredAlts = {}
+    if MNetDB.registeredAlts == nil then
+        MNetDB.registeredAlts = {}
     end
     -- Window position and size
-    if GuildBridgeDB.windowPos == nil then
-        GuildBridgeDB.windowPos = {}
+    if MNetDB.windowPos == nil then
+        MNetDB.windowPos = {}
     end
-    self.knownGuilds = GuildBridgeDB.knownGuilds
-    self.registeredAlts = GuildBridgeDB.registeredAlts
+    self.knownGuilds = MNetDB.knownGuilds
+    self.registeredAlts = MNetDB.registeredAlts
 end
 
 -- Save window position and size
 function GB:SaveWindowPosition()
     if not self.mainFrame then return end
     local point, _, relPoint, x, y = self.mainFrame:GetPoint()
-    GuildBridgeDB.windowPos = {
+    MNetDB.windowPos = {
         point = point,
         relPoint = relPoint,
         x = x,
@@ -150,7 +150,7 @@ end
 -- Restore window position and size
 function GB:RestoreWindowPosition()
     if not self.mainFrame then return end
-    local pos = GuildBridgeDB.windowPos
+    local pos = MNetDB.windowPos
     if pos and pos.point then
         self.mainFrame:ClearAllPoints()
         self.mainFrame:SetPoint(pos.point, UIParent, pos.relPoint, pos.x, pos.y)
@@ -245,9 +245,9 @@ function GB:ProcessQueue()
 end
 
 -- Debug command to show diagnostic info
-SLASH_GBDEBUG1 = "/gbdebug"
-SlashCmdList["GBDEBUG"] = function()
-    print("=== GuildBridge Debug ===")
+SLASH_MNDEBUG1 = "/mndebug"
+SlashCmdList["MNDEBUG"] = function()
+    print("=== MNet Debug ===")
 
     -- My guild info
     local myGuildName = GetGuildInfo("player")

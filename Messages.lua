@@ -1,4 +1,4 @@
--- GuildBridge Messages Module
+-- MNet Messages Module
 -- Handles message sending, receiving, and display
 
 local addonName, GB = ...
@@ -59,7 +59,7 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
             realmName = nil,
             manualRealm = false,
         }
-        GuildBridgeDB.knownGuilds = self.knownGuilds
+        MNetDB.knownGuilds = self.knownGuilds
 
         -- Rebuild tabs to show the new guild
         if self.RebuildTabs then
@@ -68,7 +68,7 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
     elseif guildHomeRealm and not self.knownGuilds[filterKey].guildHomeRealm then
         -- Update home realm if we didn't have it
         self.knownGuilds[filterKey].guildHomeRealm = guildHomeRealm
-        GuildBridgeDB.knownGuilds = self.knownGuilds
+        MNetDB.knownGuilds = self.knownGuilds
     end
 
     return filterKey
@@ -198,8 +198,11 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     end
 
     if showInNativeChat then
-        if not GuildBridgeDB.filterNativeChat or self.currentFilter == nil or displayFilterKey == self.currentFilter then
-            self:AddMessageToGuildChatFrames(formattedWithTag, 0.25, 1.0, 0.25)
+        -- Don't show in native chat if muted
+        if not MNetDB.muteSend then
+            if not MNetDB.filterNativeChat or self.currentFilter == nil or displayFilterKey == self.currentFilter then
+                self:AddMessageToGuildChatFrames(formattedWithTag, 0.25, 1.0, 0.25)
+            end
         end
     end
 end
@@ -540,11 +543,11 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
         self.scrollFrame:AddMessage(displayMsg)
     end
 
-    if not GuildBridgeDB.bridgeEnabled then
+    if not MNetDB.bridgeEnabled then
         return
     end
 
-    if GuildBridgeDB.muteSend then
+    if MNetDB.muteSend then
         local myName = UnitName("player")
         if originName == myName then
             return
@@ -699,7 +702,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     -- Don't re-relay UI messages ("U") or already-relayed messages ("R")
     -- OPTIMIZATION: Only relay to friends in DIFFERENT guilds than the message origin
     -- Friends in the same guild as the sender likely already received it
-    if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
+    if MNetDB.bridgeEnabled and sourcePart == "G" then
         self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
 end
@@ -855,7 +858,7 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
 
     -- Re-relay to other friends and alts (mesh network) - only for guild chat messages ("G")
     -- OPTIMIZATION: Only relay to friends in DIFFERENT guilds than the message origin
-    if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
+    if MNetDB.bridgeEnabled and sourcePart == "G" then
         self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
 end

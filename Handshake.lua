@@ -1,4 +1,4 @@
--- GuildBridge Handshake Module
+-- MNet Handshake Module
 -- Handles handshake protocol for bridge connection discovery
 
 local addonName, GB = ...

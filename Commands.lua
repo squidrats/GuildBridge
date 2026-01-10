@@ -1,11 +1,11 @@
--- GuildBridge Commands Module
+-- MNet Commands Module
 -- Slash command handlers
 
 local addonName, GB = ...
 
-SLASH_GUILDBRIDGE1 = "/gbridge"
-SLASH_GUILDBRIDGE2 = "/gb"
-SlashCmdList["GUILDBRIDGE"] = function(msg)
+SLASH_MDGANET1 = "/mn"
+SLASH_MDGANET2 = "/mdganet"
+SlashCmdList["MDGANET"] = function(msg)
     local cmd, arg = msg:match("^(%S*)%s*(.*)$")
     cmd = cmd:lower()
 
@@ -16,8 +16,8 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
     elseif cmd == "alt" or cmd == "addalt" then
         -- Register an alt character for same-account communication
         if arg == "" then
-            print("|cff00ff00GuildBridge:|r Usage: /gb alt CharacterName-Realm")
-            print("  Example: /gb alt Myalt-Illidan")
+            print("|cff00ff00MNet:|r Usage: /mn alt CharacterName-Realm")
+            print("  Example: /mn alt Myalt-Illidan")
             return
         end
 
@@ -28,15 +28,15 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
             arg = arg .. "-" .. realm
         end
 
-        GuildBridgeDB.registeredAlts = GuildBridgeDB.registeredAlts or {}
-        GB.registeredAlts = GuildBridgeDB.registeredAlts
+        MNetDB.registeredAlts = MNetDB.registeredAlts or {}
+        GB.registeredAlts = MNetDB.registeredAlts
 
         if GB.registeredAlts[arg] then
-            print("|cff00ff00GuildBridge:|r Alt '" .. arg .. "' is already registered.")
+            print("|cff00ff00MNet:|r Alt '" .. arg .. "' is already registered.")
         else
             GB.registeredAlts[arg] = true
-            GuildBridgeDB.registeredAlts = GB.registeredAlts
-            print("|cff00ff00GuildBridge:|r Registered alt: " .. arg)
+            MNetDB.registeredAlts = GB.registeredAlts
+            print("|cff00ff00MNet:|r Registered alt: " .. arg)
             print("  Handshakes will be sent to this character when online.")
             -- Send handshake immediately to new alt
             GB:SendWhisperHandshakeToAlt(arg)
@@ -45,7 +45,7 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
     elseif cmd == "removealt" or cmd == "delalt" then
         -- Remove a registered alt
         if arg == "" then
-            print("|cff00ff00GuildBridge:|r Usage: /gb removealt CharacterName-Realm")
+            print("|cff00ff00MNet:|r Usage: /mn removealt CharacterName-Realm")
             return
         end
 
@@ -54,23 +54,23 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
             arg = arg .. "-" .. realm
         end
 
-        GuildBridgeDB.registeredAlts = GuildBridgeDB.registeredAlts or {}
-        GB.registeredAlts = GuildBridgeDB.registeredAlts
+        MNetDB.registeredAlts = MNetDB.registeredAlts or {}
+        GB.registeredAlts = MNetDB.registeredAlts
 
         if GB.registeredAlts[arg] then
             GB.registeredAlts[arg] = nil
             GB.connectedWhisperAlts[arg] = nil
-            GuildBridgeDB.registeredAlts = GB.registeredAlts
-            print("|cff00ff00GuildBridge:|r Removed alt: " .. arg)
+            MNetDB.registeredAlts = GB.registeredAlts
+            print("|cff00ff00MNet:|r Removed alt: " .. arg)
             GB:UpdateConnectionIndicators()
         else
-            print("|cff00ff00GuildBridge:|r Alt '" .. arg .. "' is not registered.")
+            print("|cff00ff00MNet:|r Alt '" .. arg .. "' is not registered.")
         end
 
     elseif cmd == "alts" or cmd == "listalt" or cmd == "listalts" then
         -- List all registered alts
-        GuildBridgeDB.registeredAlts = GuildBridgeDB.registeredAlts or {}
-        GB.registeredAlts = GuildBridgeDB.registeredAlts
+        MNetDB.registeredAlts = MNetDB.registeredAlts or {}
+        GB.registeredAlts = MNetDB.registeredAlts
 
         local count = 0
         for _ in pairs(GB.registeredAlts) do
@@ -78,10 +78,10 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
         end
 
         if count == 0 then
-            print("|cff00ff00GuildBridge:|r No alts registered.")
-            print("  Use |cffffd700/gb alt CharacterName-Realm|r to register an alt.")
+            print("|cff00ff00MNet:|r No alts registered.")
+            print("  Use |cffffd700/mn alt CharacterName-Realm|r to register an alt.")
         else
-            print("|cff00ff00GuildBridge:|r Registered alts (" .. count .. "):")
+            print("|cff00ff00MNet:|r Registered alts (" .. count .. "):")
             for altName, _ in pairs(GB.registeredAlts) do
                 local status = ""
                 if GB.connectedWhisperAlts[altName] then
@@ -93,7 +93,7 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
 
     elseif cmd == "debug" then
         -- Debug info for troubleshooting
-        print("|cff00ff00GuildBridge Debug Info:|r")
+        print("|cff00ff00MNet Debug Info:|r")
 
         -- My guild info
         local myGuildName = GetGuildInfo("player")
@@ -154,15 +154,15 @@ SlashCmdList["GUILDBRIDGE"] = function(msg)
         print("|cffffd700Current Filter:|r " .. (GB.currentFilter or "All"))
 
     elseif cmd == "help" then
-        print("|cff00ff00GuildBridge Commands:|r")
-        print("  |cffffd700/gb|r - Toggle GuildBridge window")
-        print("  |cffffd700/gb alt <Name-Realm>|r - Register a same-account alt")
-        print("  |cffffd700/gb removealt <Name-Realm>|r - Remove a registered alt")
-        print("  |cffffd700/gb alts|r - List registered alts")
-        print("  |cffffd700/gb debug|r - Show debug info")
-        print("  |cffffd700/gb help|r - Show this help")
+        print("|cff00ff00MNet Commands:|r")
+        print("  |cffffd700/mn|r - Toggle MNet window")
+        print("  |cffffd700/mn alt <Name-Realm>|r - Register a same-account alt")
+        print("  |cffffd700/mn removealt <Name-Realm>|r - Remove a registered alt")
+        print("  |cffffd700/mn alts|r - List registered alts")
+        print("  |cffffd700/mn debug|r - Show debug info")
+        print("  |cffffd700/mn help|r - Show this help")
 
     else
-        print("|cff00ff00GuildBridge:|r Unknown command '" .. cmd .. "'. Use |cffffd700/gb help|r for commands.")
+        print("|cff00ff00MNet:|r Unknown command '" .. cmd .. "'. Use |cffffd700/mn help|r for commands.")
     end
 end

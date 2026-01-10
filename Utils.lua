@@ -1,4 +1,4 @@
--- GuildBridge Utilities Module
+-- MNet Utilities Module
 -- Helper functions for message handling, friend management, and deduplication
 
 local addonName, GB = ...

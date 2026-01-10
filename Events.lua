@@ -1,4 +1,4 @@
--- GuildBridge Events Module
+-- MNet Events Module
 -- Handles all event registration and processing
 
 local addonName, GB = ...

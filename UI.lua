@@ -1,4 +1,4 @@
--- GuildBridge UI Module
+-- MNet UI Module
 -- Handles all UI elements including main frame, tabs, and dialogs
 
 local addonName, GB = ...
@@ -442,7 +442,7 @@ end
 local function forgetGuild(filterKey)
     if not filterKey then return end
     GB.knownGuilds[filterKey] = nil
-    GuildBridgeDB.knownGuilds = GB.knownGuilds
+    MNetDB.knownGuilds = GB.knownGuilds
     if GB.currentFilter == filterKey then
         GB.currentFilter = nil
     end
@@ -456,7 +456,7 @@ local function setGuildRealm(filterKey, newRealm)
     if filterKey and GB.knownGuilds[filterKey] then
         GB.knownGuilds[filterKey].realmName = newRealm
         GB.knownGuilds[filterKey].manualRealm = true  -- Mark as manually set
-        GuildBridgeDB.knownGuilds = GB.knownGuilds
+        MNetDB.knownGuilds = GB.knownGuilds
         GB:RebuildTabs()
     end
 end
@@ -464,7 +464,7 @@ end
 -- Show realm input dialog
 showRealmInputDialog = function(filterKey, guildName)
     if not realmInputDialog then
-        realmInputDialog = CreateFrame("Frame", "GuildBridgeRealmDialog", UIParent, "BackdropTemplate")
+        realmInputDialog = CreateFrame("Frame", "MNetRealmDialog", UIParent, "BackdropTemplate")
         realmInputDialog:SetSize(220, 90)
         realmInputDialog:SetPoint("CENTER")
         realmInputDialog:SetFrameStrata("DIALOG")
@@ -539,7 +539,7 @@ end
 local function ensureContextMenu()
     if contextMenu then return end
 
-    contextMenu = CreateFrame("Frame", "GuildBridgeContextMenu", UIParent, "BackdropTemplate")
+    contextMenu = CreateFrame("Frame", "MNetContextMenu", UIParent, "BackdropTemplate")
     contextMenu:SetSize(120, 72)
     contextMenu:SetFrameStrata("DIALOG")
     contextMenu:SetBackdrop({
@@ -655,7 +655,7 @@ local function forgetAllGuilds()
             GB.knownGuilds[filterKey] = nil
         end
     end
-    GuildBridgeDB.knownGuilds = GB.knownGuilds
+    MNetDB.knownGuilds = GB.knownGuilds
 
     -- Reset filter if needed
     GB.currentFilter = nil
@@ -667,7 +667,7 @@ end
 local function ensureAllTabContextMenu()
     if allTabContextMenu then return end
 
-    allTabContextMenu = CreateFrame("Frame", "GuildBridgeAllTabContextMenu", UIParent, "BackdropTemplate")
+    allTabContextMenu = CreateFrame("Frame", "MNetAllTabContextMenu", UIParent, "BackdropTemplate")
     allTabContextMenu:SetSize(120, 50)
     allTabContextMenu:SetFrameStrata("DIALOG")
     allTabContextMenu:SetBackdrop({
@@ -761,7 +761,7 @@ end
 -- Show copy text dialog
 local function showCopyTextDialog(text)
     if not copyTextDialog then
-        copyTextDialog = CreateFrame("Frame", "GuildBridgeCopyDialog", UIParent, "BackdropTemplate")
+        copyTextDialog = CreateFrame("Frame", "MNetCopyDialog", UIParent, "BackdropTemplate")
         copyTextDialog:SetSize(400, 120)
         copyTextDialog:SetPoint("CENTER")
         copyTextDialog:SetFrameStrata("DIALOG")
@@ -829,7 +829,7 @@ local copyChatMenu
 local function ensureCopyChatMenu()
     if copyChatMenu then return end
 
-    copyChatMenu = CreateFrame("Frame", "GuildBridgeCopyChatMenu", UIParent, "BackdropTemplate")
+    copyChatMenu = CreateFrame("Frame", "MNetCopyChatMenu", UIParent, "BackdropTemplate")
     copyChatMenu:SetSize(130, 72)
     copyChatMenu:SetFrameStrata("DIALOG")
     copyChatMenu:SetBackdrop({
@@ -1073,7 +1073,7 @@ end
 
 -- Create a styled page tab (Chat/Status) - segmented control style
 createPageTab = function(parent, label, tabIndex, pageName, isFirst, isLast)
-    local tab = CreateFrame("Button", "GuildBridgePageTab" .. tabIndex, parent)
+    local tab = CreateFrame("Button", "MNetPageTab" .. tabIndex, parent)
     tab:SetSize(55, 22)
     tab:SetID(tabIndex)
     tab.pageName = pageName
@@ -1328,7 +1328,7 @@ function GB:CreateBridgeUI()
     end
 
     -- Main frame with custom backdrop
-    self.mainFrame = CreateFrame("Frame", "GuildBridgeFrame", UIParent, "BackdropTemplate")
+    self.mainFrame = CreateFrame("Frame", "MNetFrame", UIParent, "BackdropTemplate")
     self.mainFrame:SetSize(DEFAULT_WIDTH, DEFAULT_HEIGHT)
     self.mainFrame:SetPoint("CENTER")
     self.mainFrame:SetMovable(true)
@@ -1384,7 +1384,7 @@ function GB:CreateBridgeUI()
     -- Title text - guild green
     self.mainFrame.title = self.mainFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     self.mainFrame.title:SetPoint("LEFT", hordeIcon, "RIGHT", 6, 0)
-    self.mainFrame.title:SetText("Guild Bridge")
+    self.mainFrame.title:SetText("MNet")
     self.mainFrame.title:SetTextColor(unpack(COLORS.guildGreen))
 
     -- Close button (X styled)
@@ -1463,13 +1463,15 @@ function GB:CreateBridgeUI()
     self.muteCheckbox.text:SetPoint("RIGHT", self.muteCheckbox, "LEFT", -2, 0)
     self.muteCheckbox.text:SetText("Mute")
     self.muteCheckbox.text:SetTextColor(unpack(COLORS.textMuted))
-    self.muteCheckbox:SetChecked(GuildBridgeDB.muteSend or false)
+    self.muteCheckbox:SetChecked(MNetDB.muteSend or false)
     self.muteCheckbox:SetScript("OnClick", function(checkbox)
-        GuildBridgeDB.muteSend = checkbox:GetChecked()
+        MNetDB.muteSend = checkbox:GetChecked()
     end)
     self.muteCheckbox:SetScript("OnEnter", function()
         GameTooltip:SetOwner(GB.muteCheckbox, "ANCHOR_BOTTOM")
-        GameTooltip:SetText("Mute outgoing bridge messages from you")
+        GameTooltip:SetText("Mute bridge messages")
+        GameTooltip:AddLine("Prevents outgoing messages and hides", 0.7, 0.7, 0.7, true)
+        GameTooltip:AddLine("incoming bridge messages from native chat", 0.7, 0.7, 0.7, true)
         GameTooltip:Show()
     end)
     self.muteCheckbox:SetScript("OnLeave", function()
