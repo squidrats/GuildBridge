@@ -578,3 +578,240 @@ function GB:RequestRosterResync()
         end
     end
 end
+
+-- ============================================================================
+-- Party Sync Functions
+-- ============================================================================
+
+-- Get current party/raid members as a table of "Name-Realm" keys
+function GB:GetPartyMemberKeys()
+    local members = {}
+
+    if not IsInGroup() then
+        return members
+    end
+
+    local numMembers = GetNumGroupMembers()
+    local isRaid = IsInRaid()
+
+    for i = 1, numMembers do
+        local unit = isRaid and ("raid" .. i) or (i == 1 and "player" or ("party" .. (i - 1)))
+        if UnitExists(unit) then
+            local name, realm = UnitName(unit)
+            if name then
+                realm = realm or GetRealmName()
+                local key = name .. "-" .. realm
+                members[key] = true
+            end
+        end
+    end
+
+    return members
+end
+
+-- Process party update event - detect changes and broadcast
+function GB:ProcessPartyUpdate()
+    local currentMembers = self:GetPartyMemberKeys()
+    local previousMembers = self.partyMembers or {}
+
+    -- Check if there are any changes
+    local hasChanges = false
+
+    -- Check for new members
+    for key, _ in pairs(currentMembers) do
+        if not previousMembers[key] then
+            hasChanges = true
+            break
+        end
+    end
+
+    -- Check for removed members
+    if not hasChanges then
+        for key, _ in pairs(previousMembers) do
+            if not currentMembers[key] then
+                hasChanges = true
+                break
+            end
+        end
+    end
+
+    -- Update local state
+    self.partyMembers = currentMembers
+
+    -- Broadcast if changes detected
+    if hasChanges then
+        self:BroadcastPartyStatus()
+    end
+
+    -- Refresh UI
+    if self.RefreshRoster then
+        self:RefreshRoster()
+    end
+end
+
+-- Build party status payload string
+function GB:BuildPartyStatusPayload()
+    local memberList = ""
+    for key, _ in pairs(self.partyMembers) do
+        if memberList ~= "" then
+            memberList = memberList .. ","
+        end
+        memberList = memberList .. key
+    end
+    return "[GBPY]" .. memberList
+end
+
+-- Send party status to a specific target (used on new connections, bypasses throttle)
+function GB:SendPartyStatusTo(targetID, targetType)
+    local payload = self:BuildPartyStatusPayload()
+
+    if targetType == "whisper" then
+        self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, targetID)
+    else
+        self:QueueBNetMessage(targetID, self.BRIDGE_ADDON_PREFIX, payload)
+    end
+end
+
+-- Broadcast current party status to all connected bridge users
+function GB:BroadcastPartyStatus()
+    local now = GetTime()
+
+    -- Throttle broadcasts
+    if now - self.lastPartySyncBroadcast < self.PARTY_SYNC_THROTTLE then
+        return
+    end
+    self.lastPartySyncBroadcast = now
+
+    local payload = self:BuildPartyStatusPayload()
+
+    -- Send to all connected bridge users
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+    end
+
+    -- Send to whisper alts
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 then
+            self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
+        end
+    end
+end
+
+-- Handle incoming party status message
+function GB:HandlePartyMessage(payload, senderID, senderType)
+    -- Parse the member list
+    local members = {}
+    if payload and payload ~= "" then
+        for key in payload:gmatch("[^,]+") do
+            members[key] = true
+        end
+    end
+
+    -- Get sender's character name to track whose party this is
+    local senderKey = nil
+    if senderType == "bnet" then
+        local info = self.connectedBridgeUsers[senderID]
+        if info and info.characterName then
+            local realm = info.characterRealm or info.realmName or GetRealmName()
+            senderKey = info.characterName .. "-" .. realm
+        end
+    elseif senderType == "whisper" then
+        senderKey = senderID  -- Already in Name-Realm format
+    end
+
+    if not senderKey then return end
+
+    -- Clear old party data from this sender (collect keys first to avoid modifying while iterating)
+    local keysToRemove = {}
+    for memberKey, partyInfo in pairs(self.remotePartyMembers) do
+        if partyInfo.partyLeader == senderKey then
+            table.insert(keysToRemove, memberKey)
+        end
+    end
+    for _, key in ipairs(keysToRemove) do
+        self.remotePartyMembers[key] = nil
+    end
+
+    -- Store new party data (if sender is in a party)
+    if next(members) then
+        for memberKey, _ in pairs(members) do
+            self.remotePartyMembers[memberKey] = {
+                partyLeader = senderKey,
+            }
+        end
+    end
+
+    -- Refresh UI
+    if self.RefreshRoster then
+        self:RefreshRoster()
+    end
+end
+
+-- Clear party data for a specific sender (when they disconnect)
+function GB:ClearPartyDataForSender(senderKey)
+    if not senderKey then return end
+
+    local keysToRemove = {}
+    for memberKey, partyInfo in pairs(self.remotePartyMembers) do
+        if partyInfo.partyLeader == senderKey then
+            table.insert(keysToRemove, memberKey)
+        end
+    end
+
+    for _, key in ipairs(keysToRemove) do
+        self.remotePartyMembers[key] = nil
+    end
+
+    if #keysToRemove > 0 and self.RefreshRoster then
+        self:RefreshRoster()
+    end
+end
+
+-- Clear all stale party data (for senders no longer connected)
+function GB:CleanupStalePartyData()
+    -- Build set of currently connected sender keys
+    local connectedSenders = {}
+
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        if info.characterName then
+            local realm = info.characterRealm or info.realmName or GetRealmName()
+            local key = info.characterName .. "-" .. realm
+            connectedSenders[key] = true
+        end
+    end
+
+    local now = GetTime()
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 then
+            connectedSenders[altName] = true
+        end
+    end
+
+    -- Remove party data for senders no longer connected
+    local keysToRemove = {}
+    for memberKey, partyInfo in pairs(self.remotePartyMembers) do
+        if not connectedSenders[partyInfo.partyLeader] then
+            table.insert(keysToRemove, memberKey)
+        end
+    end
+
+    for _, key in ipairs(keysToRemove) do
+        self.remotePartyMembers[key] = nil
+    end
+
+    if #keysToRemove > 0 and self.RefreshRoster then
+        self:RefreshRoster()
+    end
+end
+
+-- Check if a player is in the local player's party
+function GB:IsInMyParty(name, realm)
+    local key = name .. "-" .. (realm or GetRealmName())
+    return self.partyMembers[key] == true
+end
+
+-- Check if a player is in any synced party (including my own)
+function GB:IsInAnyParty(name, realm)
+    local key = name .. "-" .. (realm or GetRealmName())
+    return self.partyMembers[key] == true or self.remotePartyMembers[key] ~= nil
+end

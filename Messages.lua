@@ -591,6 +591,11 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
             self:HandleRosterRequest(message:sub(7), senderID, "bnet")
         end
         return
+    elseif message:sub(1, 6) == "[GBPY]" then
+        if self.HandlePartyMessage then
+            self:HandlePartyMessage(message:sub(7), senderID, "bnet")
+        end
+        return
     end
 
     local text = message
@@ -768,6 +773,11 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
     elseif message:sub(1, 6) == "[GBRR]" then
         if self.HandleRosterRequest then
             self:HandleRosterRequest(message:sub(7), sender, "whisper")
+        end
+        return
+    elseif message:sub(1, 6) == "[GBPY]" then
+        if self.HandlePartyMessage then
+            self:HandlePartyMessage(message:sub(7), sender, "whisper")
         end
         return
     end

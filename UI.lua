@@ -301,6 +301,7 @@ function GB:RefreshRoster()
     -- Create/reuse entry frames
     local yOffset = 0
     local entryHeight = 16
+    local partyIconSize = 12
     for i, member in ipairs(filteredMembers) do
         local entry = self.rosterEntries[i]
         if not entry then
@@ -308,7 +309,15 @@ function GB:RefreshRoster()
             entry = CreateFrame("Frame", nil, self.rosterContent)
             entry:SetSize(ROSTER_WIDTH - 30, entryHeight)
 
-            -- Name text
+            -- Party icon (small group icon on the left)
+            entry.partyIcon = entry:CreateTexture(nil, "OVERLAY")
+            entry.partyIcon:SetSize(partyIconSize, partyIconSize)
+            entry.partyIcon:SetPoint("LEFT", 1, 0)
+            entry.partyIcon:SetTexture("Interface\\GroupFrame\\UI-Group-LeaderIcon")
+            entry.partyIcon:SetVertexColor(0.4, 0.8, 1.0, 1)  -- Light blue tint
+            entry.partyIcon:Hide()
+
+            -- Name text (offset to accommodate party icon when shown)
             entry.nameText = entry:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
             entry.nameText:SetPoint("LEFT", 2, 0)
             entry.nameText:SetJustifyH("LEFT")
@@ -338,6 +347,9 @@ function GB:RefreshRoster()
                 elseif self.memberData.isWhisper then
                     GameTooltip:AddLine("(Same Account)", 0.8, 0.6, 1)
                 end
+                if self.memberData.inParty then
+                    GameTooltip:AddLine("In Party", 0.4, 0.8, 1.0)
+                end
                 GameTooltip:AddLine("Right-click for options", 0.5, 0.5, 0.5)
                 GameTooltip:Show()
             end)
@@ -359,6 +371,21 @@ function GB:RefreshRoster()
         -- Update entry data
         entry.memberData = member
         entry:SetPoint("TOPLEFT", 0, -yOffset)
+
+        -- Check if member is in a party (local or remote)
+        local inParty = self:IsInMyParty(member.name, member.realm) or self:IsInAnyParty(member.name, member.realm)
+        member.inParty = inParty
+
+        -- Show/hide party icon and adjust name text position
+        if inParty then
+            entry.partyIcon:Show()
+            entry.nameText:SetPoint("LEFT", partyIconSize + 2, 0)
+            entry.nameText:SetWidth(ROSTER_WIDTH - 34 - partyIconSize)
+        else
+            entry.partyIcon:Hide()
+            entry.nameText:SetPoint("LEFT", 2, 0)
+            entry.nameText:SetWidth(ROSTER_WIDTH - 34)
+        end
 
         -- Format display name with realm (like native guild roster)
         local displayName = member.name or "Unknown"

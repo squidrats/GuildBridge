@@ -16,6 +16,7 @@ GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
 GB.eventFrame:RegisterEvent("PLAYER_LOGOUT")
 GB.eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- For detecting offline alts
 GB.eventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")  -- For roster sync
+GB.eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")  -- For party sync
 
 -- Track if we've done initial handshake
 local initialHandshakeDone = false
@@ -74,6 +75,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 if GB.ClearDisconnectedRosters then
                     GB:ClearDisconnectedRosters()
                 end
+                -- Clear stale party data for disconnected users
+                if GB.CleanupStalePartyData then
+                    GB:CleanupStalePartyData()
+                end
             end)
         end
 
@@ -125,6 +130,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             C_Timer.After(5, function()
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
+                end
+                -- Initial party sync after login
+                if GB.ProcessPartyUpdate then
+                    GB:ProcessPartyUpdate()
                 end
             end)
         end
@@ -250,6 +259,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     GB:ProcessGuildRosterUpdate()
                 end
             end)
+        end
+
+    elseif event == "GROUP_ROSTER_UPDATE" then
+        -- Party composition changed - update party members and broadcast
+        if GB.ProcessPartyUpdate then
+            GB:ProcessPartyUpdate()
         end
     end
 end)

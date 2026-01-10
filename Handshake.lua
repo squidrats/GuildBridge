@@ -164,6 +164,11 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         self:RequestFullRoster(senderGameAccountID, guildClubId, "bnet")
     end
 
+    -- Send our party status to the new connection (targeted, bypasses throttle)
+    if self.SendPartyStatusTo then
+        self:SendPartyStatusTo(senderGameAccountID, "bnet")
+    end
+
     return true
 end
 
@@ -327,6 +332,11 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
     -- Request their roster (only if we have the function and they have a clubId)
     if guildClubId and self.RequestFullRoster then
         self:RequestFullRoster(senderName, guildClubId, "whisper")
+    end
+
+    -- Send our party status to the new connection (targeted, bypasses throttle)
+    if self.SendPartyStatusTo then
+        self:SendPartyStatusTo(senderName, "whisper")
     end
 
     return true

@@ -41,6 +41,12 @@ GB.ROSTER_CHUNK_SIZE = 200    -- bytes per chunk payload
 GB.lastRosterBroadcast = 0    -- timestamp of last roster broadcast
 GB.rosterUpdatePending = false -- debounce flag for roster updates
 
+-- Party sync state
+GB.partyMembers = {}          -- "Name-Realm" -> true (players in my current party)
+GB.remotePartyMembers = {}    -- "Name-Realm" -> { partyLeader = "Name-Realm" } (party info from other players)
+GB.lastPartySyncBroadcast = 0 -- timestamp of last party sync broadcast
+GB.PARTY_SYNC_THROTTLE = 1    -- seconds between party broadcasts
+
 -- UI references (populated by UI module)
 GB.mainFrame = nil
 GB.scrollFrame = nil
