@@ -15,6 +15,7 @@ GB.eventFrame:RegisterEvent("BN_CONNECTED")
 GB.eventFrame:RegisterEvent("PLAYER_GUILD_UPDATE")
 GB.eventFrame:RegisterEvent("PLAYER_LOGOUT")
 GB.eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- For detecting offline alts
+GB.eventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")  -- For roster sync
 
 -- Track if we've done initial handshake
 local initialHandshakeDone = false
@@ -45,6 +46,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     end
                 end
                 GB:UpdateConnectionIndicators()
+                -- Clean up stale roster data
+                if GB.CleanupStaleRosters then
+                    GB:CleanupStaleRosters()
+                end
             end)
 
             -- More frequent ping for whisper alts (every 30 seconds) since we can't detect their logout
@@ -58,6 +63,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     end
                 end
                 GB:UpdateConnectionIndicators()
+                -- Clear rosters for guilds that no longer have connections
+                if GB.ClearDisconnectedRosters then
+                    GB:ClearDisconnectedRosters()
+                end
             end)
         end
 
@@ -96,6 +105,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             C_Timer.After(3, function()
                 GB:ForceSendHandshake()
                 GB:ForceSendWhisperHandshake()
+            end)
+            -- Capture initial roster after a delay (guild roster needs time to load)
+            C_Timer.After(5, function()
+                if GB.ProcessGuildRosterUpdate then
+                    GB:ProcessGuildRosterUpdate()
+                end
             end)
         end
 
@@ -137,6 +152,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
         GB:UpdateConnectionIndicators()
+        -- Clear rosters for guilds that no longer have connections
+        if GB.ClearDisconnectedRosters then
+            GB:ClearDisconnectedRosters()
+        end
 
         -- Send handshake to any NEW friends
         -- We send to all friends - they'll only respond if they're in an allowed guild
@@ -204,6 +223,18 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     break
                 end
             end
+        end
+
+    elseif event == "GUILD_ROSTER_UPDATE" then
+        -- Debounce roster updates (this event can fire rapidly)
+        if not GB.rosterUpdatePending then
+            GB.rosterUpdatePending = true
+            C_Timer.After(1, function()
+                GB.rosterUpdatePending = false
+                if GB.ProcessGuildRosterUpdate then
+                    GB:ProcessGuildRosterUpdate()
+                end
+            end)
         end
     end
 end)

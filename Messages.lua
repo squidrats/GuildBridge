@@ -572,6 +572,24 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         return
     end
 
+    -- Check for roster sync messages
+    if message:sub(1, 6) == "[GBRF]" then
+        if self.HandleRosterFullMessage then
+            self:HandleRosterFullMessage(message:sub(7), senderID, "bnet")
+        end
+        return
+    elseif message:sub(1, 6) == "[GBRD]" then
+        if self.HandleRosterDeltaMessage then
+            self:HandleRosterDeltaMessage(message:sub(7), senderID, "bnet")
+        end
+        return
+    elseif message:sub(1, 6) == "[GBRR]" then
+        if self.HandleRosterRequest then
+            self:HandleRosterRequest(message:sub(7), senderID, "bnet")
+        end
+        return
+    end
+
     local text = message
     if not text or text:sub(1, #self.BRIDGE_PAYLOAD_PREFIX) ~= self.BRIDGE_PAYLOAD_PREFIX then
         return
@@ -730,6 +748,24 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
 
     -- Check for whisper handshake messages first
     if self:HandleWhisperHandshakeMessage(message, sender) then
+        return
+    end
+
+    -- Check for roster sync messages
+    if message:sub(1, 6) == "[GBRF]" then
+        if self.HandleRosterFullMessage then
+            self:HandleRosterFullMessage(message:sub(7), sender, "whisper")
+        end
+        return
+    elseif message:sub(1, 6) == "[GBRD]" then
+        if self.HandleRosterDeltaMessage then
+            self:HandleRosterDeltaMessage(message:sub(7), sender, "whisper")
+        end
+        return
+    elseif message:sub(1, 6) == "[GBRR]" then
+        if self.HandleRosterRequest then
+            self:HandleRosterRequest(message:sub(7), sender, "whisper")
+        end
         return
     end
 

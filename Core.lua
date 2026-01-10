@@ -31,6 +31,14 @@ GB.guildChatFrames = {}       -- Track which chat frames have guild chat enabled
 GB.outgoingQueue = {}         -- Queue of outgoing messages { type, target, prefix, payload }
 GB.isProcessingQueue = false  -- Flag to track if queue processor is running
 
+-- Roster sync state
+GB.guildRosters = {}          -- filterKey -> { members = {}, version = 0, lastUpdate = 0 }
+GB.pendingRosterChunks = {}   -- guildClubId -> { chunks = {}, total = n, version = v, startTime = t }
+GB.ROSTER_SYNC_THROTTLE = 2   -- seconds between roster broadcasts
+GB.ROSTER_CHUNK_SIZE = 200    -- bytes per chunk payload
+GB.lastRosterBroadcast = 0    -- timestamp of last roster broadcast
+GB.rosterUpdatePending = false -- debounce flag for roster updates
+
 -- UI references (populated by UI module)
 GB.mainFrame = nil
 GB.scrollFrame = nil

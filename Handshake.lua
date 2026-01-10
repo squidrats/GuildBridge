@@ -98,6 +98,10 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
     if data == "LEAVE" then
         self.connectedBridgeUsers[senderGameAccountID] = nil
         self:UpdateConnectionIndicators()
+        -- Clear rosters for guilds that no longer have connections
+        if self.ClearDisconnectedRosters then
+            self:ClearDisconnectedRosters()
+        end
         if self.currentPage == "status" then
             self:RefreshMessages()
         end
@@ -152,6 +156,12 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
     -- If they sent HELLO, respond with PONG immediately
     if handshakeType == "HELLO" then
         self:SendHandshakeMessage("PONG", senderGameAccountID)
+    end
+
+    -- Request their roster (only if we have the function and they have a clubId)
+    -- We do this after any HELLO or PONG to sync roster data
+    if guildClubId and self.RequestFullRoster then
+        self:RequestFullRoster(senderGameAccountID, guildClubId, "bnet")
     end
 
     return true
@@ -262,6 +272,10 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
     if data == "LEAVE" then
         self.connectedWhisperAlts[senderName] = nil
         self:UpdateConnectionIndicators()
+        -- Clear rosters for guilds that no longer have connections
+        if self.ClearDisconnectedRosters then
+            self:ClearDisconnectedRosters()
+        end
         if self.currentPage == "status" then
             self:RefreshMessages()
         end
@@ -308,6 +322,11 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
     -- If they sent HELLO, respond with PONG
     if handshakeType == "HELLO" then
         doSendWhisperHandshake("PONG", senderName)
+    end
+
+    -- Request their roster (only if we have the function and they have a clubId)
+    if guildClubId and self.RequestFullRoster then
+        self:RequestFullRoster(senderName, guildClubId, "whisper")
     end
 
     return true

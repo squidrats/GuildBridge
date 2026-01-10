@@ -6,8 +6,9 @@ local addonName, GB = ...
 -- UI Constants
 local MIN_WIDTH = 380
 local MIN_HEIGHT = 280
-local DEFAULT_WIDTH = 480
+local DEFAULT_WIDTH = 600  -- Wider to accommodate roster panel
 local DEFAULT_HEIGHT = 380
+local ROSTER_WIDTH = 140   -- Width of roster panel
 
 -- Guild-style color scheme (warmer, easier on eyes)
 local COLORS = {
@@ -127,6 +128,313 @@ function GB:UpdateConnectionIndicators()
                 tab.statusDot:SetVertexColor(unpack(COLORS.statusRed))
             end
         end
+    end
+
+    -- Also refresh roster when connection status changes
+    self:RefreshRoster()
+end
+
+-- Helper to convert hex color to RGB values (0-1)
+local function hexToRGB(hex)
+    if not hex or #hex ~= 6 then return 1, 1, 1 end
+    local r = tonumber(hex:sub(1, 2), 16) / 255
+    local g = tonumber(hex:sub(3, 4), 16) / 255
+    local b = tonumber(hex:sub(5, 6), 16) / 255
+    return r, g, b
+end
+
+-- Refresh roster panel with connected users and synced guild members
+function GB:RefreshRoster()
+    if not self.rosterContent or not self.rosterPanel then return end
+
+    -- Only show roster on chat page
+    if self.currentPage ~= "chat" then
+        self.rosterPanel:Hide()
+        return
+    end
+    self.rosterPanel:Show()
+
+    -- Hide all existing entries
+    for _, entry in ipairs(self.rosterEntries) do
+        entry:Hide()
+    end
+
+    -- Gather all members to display
+    local members = {}
+    local seenMembers = {}  -- Track by "name-realm" to avoid duplicates
+    local now = GetTime()
+
+    -- Get my own guild info for comparison
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myGuildHomeRealm = self:GetGuildHomeRealm()
+    local myFilterKey = nil
+    if myGuildName then
+        if myGuildClubId then
+            myFilterKey = myGuildName .. "-" .. myGuildClubId
+        elseif myGuildHomeRealm then
+            myFilterKey = myGuildName .. "-" .. myGuildHomeRealm
+        end
+    end
+
+    -- Helper to add member if not duplicate
+    local function addMember(member)
+        local key = (member.name or "?") .. "-" .. (member.realm or "")
+        if not seenMembers[key] then
+            seenMembers[key] = true
+            table.insert(members, member)
+        end
+    end
+
+    -- Add members from synced rosters (these are the full guild rosters)
+    for filterKey, roster in pairs(self.guildRosters or {}) do
+        if roster.members then
+            local guildInfo = self.knownGuilds[filterKey]
+            local guildName = guildInfo and guildInfo.guildName or "Unknown"
+            local guildHomeRealm = guildInfo and guildInfo.guildHomeRealm or nil
+
+            for name, info in pairs(roster.members) do
+                -- Determine realm for display
+                local displayRealm = info.realm or guildHomeRealm
+
+                addMember({
+                    name = name,
+                    realm = displayRealm,
+                    guildName = guildName,
+                    guildHomeRealm = guildHomeRealm,
+                    filterKey = filterKey,
+                    class = info.class,
+                    isRemote = true,
+                })
+            end
+        end
+    end
+
+    -- Add myself if in an allowed guild (mark as "me" for special display)
+    if myGuildName and self.allowedGuilds[myGuildName] then
+        local playerName = UnitName("player")
+        local playerRealm = GetRealmName()
+        local _, _, _, _, _, _, _, _, _, _, playerClass = GetPlayerInfoByGUID(UnitGUID("player"))
+
+        -- Check if already added from roster sync, update with isMe flag
+        local key = playerName .. "-" .. (playerRealm or "")
+        if seenMembers[key] then
+            -- Find and update
+            for _, m in ipairs(members) do
+                if m.name == playerName and (m.realm == playerRealm or m.realm == nil) then
+                    m.isMe = true
+                    m.class = playerClass
+                    break
+                end
+            end
+        else
+            addMember({
+                name = playerName,
+                realm = playerRealm,
+                guildName = myGuildName,
+                guildHomeRealm = myGuildHomeRealm,
+                filterKey = myFilterKey,
+                class = playerClass,
+                isMe = true,
+            })
+        end
+    end
+
+    -- Also mark connected bridge users (they have direct connection)
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        if now - info.lastSeen < 300 then
+            local name = info.characterName
+            local realm = info.characterRealm or info.realmName
+            if name then
+                local key = name .. "-" .. (realm or "")
+                -- Find and mark as bridge user
+                for _, m in ipairs(members) do
+                    local mKey = m.name .. "-" .. (m.realm or "")
+                    if mKey == key then
+                        m.isBNet = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Mark whisper alts
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 90 then
+            local name, realm = strsplit("-", altName)
+            if name then
+                -- Find and mark as whisper alt
+                for _, m in ipairs(members) do
+                    if m.name == name and (m.realm == realm or (not m.realm and not realm)) then
+                        m.isWhisper = true
+                        break
+                    end
+                end
+            end
+        end
+    end
+
+    -- Filter by current tab selection
+    local filteredMembers = {}
+    for _, member in ipairs(members) do
+        if self.currentFilter == nil then
+            -- "All" tab - show everyone
+            table.insert(filteredMembers, member)
+        elseif member.filterKey == self.currentFilter then
+            -- Specific guild tab - only show members from that guild
+            table.insert(filteredMembers, member)
+        end
+    end
+
+    -- Sort members: myself first, then alphabetically
+    table.sort(filteredMembers, function(a, b)
+        if a.isMe then return true end
+        if b.isMe then return false end
+        return (a.name or "") < (b.name or "")
+    end)
+
+    -- Update header with count
+    local headerText = "Online (" .. #filteredMembers .. ")"
+    self.rosterHeader:SetText(headerText)
+
+    -- Create/reuse entry frames
+    local yOffset = 0
+    local entryHeight = 16
+    for i, member in ipairs(filteredMembers) do
+        local entry = self.rosterEntries[i]
+        if not entry then
+            -- Create new entry frame
+            entry = CreateFrame("Frame", nil, self.rosterContent)
+            entry:SetSize(ROSTER_WIDTH - 30, entryHeight)
+
+            -- Name text
+            entry.nameText = entry:CreateFontString(nil, "OVERLAY", "GameFontHighlightExtraSmall")
+            entry.nameText:SetPoint("LEFT", 2, 0)
+            entry.nameText:SetJustifyH("LEFT")
+            entry.nameText:SetWidth(ROSTER_WIDTH - 34)
+            entry.nameText:SetWordWrap(false)
+
+            -- Hover highlight
+            entry.highlight = entry:CreateTexture(nil, "BACKGROUND")
+            entry.highlight:SetAllPoints()
+            entry.highlight:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.3)
+            entry.highlight:Hide()
+
+            entry:EnableMouse(true)
+            entry:SetScript("OnEnter", function(self)
+                self.highlight:Show()
+                -- Show tooltip with full info
+                GameTooltip:SetOwner(self, "ANCHOR_LEFT")
+                local tooltipName = self.memberData.name or "Unknown"
+                if self.memberData.realm then
+                    tooltipName = tooltipName .. "-" .. self.memberData.realm
+                end
+                GameTooltip:SetText(tooltipName, 1, 1, 1)
+                if self.memberData.guildName then
+                    local guildLine = "<" .. self.memberData.guildName .. ">"
+                    if self.memberData.guildHomeRealm then
+                        guildLine = guildLine .. " " .. self.memberData.guildHomeRealm
+                    end
+                    GameTooltip:AddLine(guildLine, COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3])
+                end
+                if self.memberData.isMe then
+                    GameTooltip:AddLine("(You)", 0.7, 0.7, 0.7)
+                elseif self.memberData.isBNet then
+                    GameTooltip:AddLine("(BNet Friend)", 0.5, 0.8, 1)
+                elseif self.memberData.isWhisper then
+                    GameTooltip:AddLine("(Same Account)", 0.8, 0.6, 1)
+                end
+                GameTooltip:AddLine("Right-click for options", 0.5, 0.5, 0.5)
+                GameTooltip:Show()
+            end)
+            entry:SetScript("OnLeave", function(self)
+                self.highlight:Hide()
+                GameTooltip:Hide()
+            end)
+
+            -- Right-click to show context menu
+            entry:SetScript("OnMouseDown", function(self, button)
+                if button == "RightButton" then
+                    GB:ShowRosterContextMenu(self.memberData)
+                end
+            end)
+
+            self.rosterEntries[i] = entry
+        end
+
+        -- Update entry data
+        entry.memberData = member
+        entry:SetPoint("TOPLEFT", 0, -yOffset)
+
+        -- Format display name
+        local displayName = member.name or "Unknown"
+        if member.isMe then
+            displayName = displayName .. " *"
+        end
+
+        -- Get class color
+        local r, g, b = 1, 1, 1  -- Default white
+        if member.class and GB.classColors[member.class] then
+            r, g, b = hexToRGB(GB.classColors[member.class])
+        elseif member.isMe then
+            r, g, b = COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3]
+        end
+
+        entry.nameText:SetText(displayName)
+        entry.nameText:SetTextColor(r, g, b, 1)
+
+        entry:Show()
+        yOffset = yOffset + entryHeight
+    end
+
+    -- Update content height for scrolling
+    self.rosterContent:SetHeight(math.max(1, yOffset))
+end
+
+-- Show roster context menu for a member using WoW's native player dropdown
+function GB:ShowRosterContextMenu(memberData)
+    if not memberData or memberData.isMe then return end
+
+    -- Build the full name (Name-Realm format for cross-realm)
+    local fullName = memberData.name
+    if memberData.realm and memberData.realm ~= "" then
+        fullName = memberData.name .. "-" .. memberData.realm
+    end
+
+    -- Use WoW's native player context menu
+    -- This opens the same dropdown you see when right-clicking a name in chat
+    if Menu and Menu.GetManager then
+        -- Dragonflight+ menu system
+        MenuUtil.CreateContextMenu(nil, function(owner, rootDescription)
+            rootDescription:CreateTitle(fullName)
+            rootDescription:CreateButton("Whisper", function()
+                ChatFrame_OpenChat("/w " .. fullName .. " ")
+            end)
+            rootDescription:CreateButton("Invite", function()
+                C_PartyInfo.InviteUnit(fullName)
+            end)
+            rootDescription:CreateButton("Ignore", function()
+                AddIgnore(fullName)
+            end)
+            rootDescription:CreateButton("Report Player", function()
+                PlayerReportFrame:InitiateReport(Enum.ReportType.Chat, fullName)
+            end)
+            rootDescription:CreateButton("Copy Name", function()
+                -- Put name in chat editbox for easy copying
+                local editBox = ChatFrame1EditBox
+                if editBox then
+                    editBox:SetText(fullName)
+                    editBox:Show()
+                    editBox:SetFocus()
+                    editBox:HighlightText()
+                end
+            end)
+            rootDescription:CreateButton(CANCEL, function() end)
+        end)
+    else
+        -- Fallback: use SetItemRef with RightButton (may not work in all versions)
+        SetItemRef("player:" .. fullName, "|Hplayer:" .. fullName .. "|h[" .. fullName .. "]|h", "RightButton")
     end
 end
 
@@ -727,6 +1035,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
             GB.currentFilter = filterValue
             updateTabHighlights()
             GB:RefreshMessages()
+            GB:RefreshRoster()
         end
     end)
 
@@ -903,13 +1212,18 @@ updatePageVisibility = function()
             scrollTopOffset = titleBarHeight + pageTabHeight + 8
         end
         GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
-        -- Also adjust scrollbar track to match
+        -- Also adjust scrollbar track to match (left of roster panel)
         if GB.scrollBarTrack then
-            GB.scrollBarTrack:SetPoint("TOPRIGHT", -8, -scrollTopOffset)
+            GB.scrollBarTrack:SetPoint("TOPRIGHT", -(ROSTER_WIDTH + 10), -scrollTopOffset)
+        end
+        -- Also adjust roster panel position
+        if GB.rosterPanel then
+            GB.rosterPanel:SetPoint("TOPRIGHT", -8, -scrollTopOffset)
         end
     end
 
     GB:RefreshMessages()
+    GB:RefreshRoster()
 end
 
 -- Rebuild guild filter tabs
@@ -1129,9 +1443,9 @@ function GB:CreateBridgeUI()
 
     -- Handle resize events
     self.mainFrame:SetScript("OnSizeChanged", function(frame, width, height)
-        -- Update scroll frame bottom anchor
+        -- Update scroll frame bottom anchor (account for roster panel)
         if GB.scrollFrame then
-            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -10, 40)
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 24), 40)
         end
     end)
 
@@ -1162,11 +1476,11 @@ function GB:CreateBridgeUI()
         GameTooltip:Hide()
     end)
 
-    -- Scroll frame for messages - chat area (leave room for scrollbar on right)
+    -- Scroll frame for messages - chat area (leave room for scrollbar and roster on right)
     -- Initial position will be adjusted by updatePageVisibility based on tab rows
     self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
     self.scrollFrame:SetPoint("TOPLEFT", 10, -100)  -- Adjusted for new layout
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", -24, 40)  -- Extra space for scrollbar
+    self.scrollFrame:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 24), 40)  -- Room for scrollbar + roster
     self.scrollFrame:SetFontObject(ChatFontNormal)
     self.scrollFrame:SetJustifyH("LEFT")
     self.scrollFrame:SetFading(false)
@@ -1181,10 +1495,10 @@ function GB:CreateBridgeUI()
     scrollBg:SetAllPoints()
     scrollBg:SetColorTexture(unpack(COLORS.bgChat))
 
-    -- Scrollbar track (visual background)
+    -- Scrollbar track (visual background) - positioned to left of roster panel
     local scrollBarTrack = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
-    scrollBarTrack:SetPoint("TOPRIGHT", -8, -100)  -- Adjusted for new layout
-    scrollBarTrack:SetPoint("BOTTOMRIGHT", -8, 40)
+    scrollBarTrack:SetPoint("TOPRIGHT", -(ROSTER_WIDTH + 10), -100)  -- Left of roster panel
+    scrollBarTrack:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 10), 40)
     scrollBarTrack:SetWidth(12)
     scrollBarTrack:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -1324,6 +1638,53 @@ function GB:CreateBridgeUI()
             updateScrollBar()
         end
     end
+
+    -- ============================================================================
+    -- ROSTER PANEL (right side)
+    -- Shows connected bridge users filtered by current tab
+    -- ============================================================================
+
+    -- Roster container frame
+    local rosterPanel = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
+    rosterPanel:SetPoint("TOPRIGHT", -8, -100)  -- Same top as scroll frame
+    rosterPanel:SetPoint("BOTTOMRIGHT", -8, 40)  -- Same bottom as scroll frame
+    rosterPanel:SetWidth(ROSTER_WIDTH)
+    rosterPanel:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    rosterPanel:SetBackdropColor(0.04, 0.04, 0.05, 0.85)
+    rosterPanel:SetBackdropBorderColor(unpack(COLORS.borderLight))
+    self.rosterPanel = rosterPanel
+
+    -- Roster header
+    local rosterHeader = rosterPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    rosterHeader:SetPoint("TOP", rosterPanel, "TOP", 0, -6)
+    rosterHeader:SetText("Online")
+    rosterHeader:SetTextColor(unpack(COLORS.guildGreen))
+    self.rosterHeader = rosterHeader
+
+    -- Roster scroll frame (for member list)
+    local rosterScrollFrame = CreateFrame("ScrollFrame", nil, rosterPanel, "UIPanelScrollFrameTemplate")
+    rosterScrollFrame:SetPoint("TOPLEFT", 4, -22)
+    rosterScrollFrame:SetPoint("BOTTOMRIGHT", -22, 4)
+
+    -- Hide the default scroll bar styling (we'll style it)
+    local rosterScrollBar = rosterScrollFrame.ScrollBar or _G[rosterScrollFrame:GetName().."ScrollBar"]
+    if rosterScrollBar then
+        rosterScrollBar:SetWidth(10)
+    end
+
+    -- Roster content frame (holds member entries)
+    local rosterContent = CreateFrame("Frame", nil, rosterScrollFrame)
+    rosterContent:SetSize(ROSTER_WIDTH - 26, 1)  -- Height will grow
+    rosterScrollFrame:SetScrollChild(rosterContent)
+    self.rosterContent = rosterContent
+    self.rosterScrollFrame = rosterScrollFrame
+
+    -- Store roster entry frames for reuse
+    self.rosterEntries = {}
 
     -- Input box container with guild-style border
     local inputBg = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
