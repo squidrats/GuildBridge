@@ -150,6 +150,7 @@ function GB:SaveWindowPosition()
         y = y,
         width = self.mainFrame:GetWidth(),
         height = self.mainFrame:GetHeight(),
+        rosterWidth = self.rosterWidth,  -- Save roster width
     }
 end
 
@@ -163,6 +164,10 @@ function GB:RestoreWindowPosition()
     end
     if pos and pos.width and pos.height then
         self.mainFrame:SetSize(pos.width, pos.height)
+    end
+    -- Restore roster width (will be applied by UI module)
+    if pos and pos.rosterWidth then
+        self.rosterWidth = pos.rosterWidth
     end
 end
 

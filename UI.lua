@@ -8,7 +8,10 @@ local MIN_WIDTH = 380
 local MIN_HEIGHT = 280
 local DEFAULT_WIDTH = 600  -- Wider to accommodate roster panel
 local DEFAULT_HEIGHT = 380
-local ROSTER_WIDTH = 140   -- Width of roster panel
+local DEFAULT_ROSTER_WIDTH = 140   -- Default width of roster panel
+local MIN_ROSTER_WIDTH = 80        -- Minimum roster width
+local MAX_ROSTER_WIDTH = 250       -- Maximum roster width
+local ROSTER_WIDTH = DEFAULT_ROSTER_WIDTH  -- Current roster width (will be updated from saved vars)
 
 -- Guild-style color scheme (warmer, easier on eyes)
 local COLORS = {
@@ -1472,8 +1475,9 @@ function GB:CreateBridgeUI()
     -- Handle resize events
     self.mainFrame:SetScript("OnSizeChanged", function(frame, width, height)
         -- Update scroll frame bottom anchor (account for roster panel)
+        local currentRosterWidth = GB.rosterWidth or ROSTER_WIDTH
         if GB.scrollFrame then
-            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 24), 40)
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -(currentRosterWidth + 24), 40)
         end
     end)
 
@@ -1674,6 +1678,14 @@ function GB:CreateBridgeUI()
     -- Shows connected bridge users filtered by current tab
     -- ============================================================================
 
+    -- Restore saved roster width or use default
+    if self.rosterWidth then
+        ROSTER_WIDTH = math.max(MIN_ROSTER_WIDTH, math.min(MAX_ROSTER_WIDTH, self.rosterWidth))
+    else
+        ROSTER_WIDTH = DEFAULT_ROSTER_WIDTH
+        self.rosterWidth = ROSTER_WIDTH
+    end
+
     -- Roster container frame
     local rosterPanel = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
     rosterPanel:SetPoint("TOPRIGHT", -8, -100)  -- Same top as scroll frame
@@ -1797,6 +1809,112 @@ function GB:CreateBridgeUI()
 
     -- Store roster entry frames for reuse
     self.rosterEntries = {}
+
+    -- ============================================================================
+    -- ROSTER RESIZE HANDLE (left edge of roster panel)
+    -- ============================================================================
+
+    local rosterResizeHandle = CreateFrame("Frame", nil, rosterPanel)
+    rosterResizeHandle:SetPoint("TOPLEFT", rosterPanel, "TOPLEFT", 0, 0)
+    rosterResizeHandle:SetPoint("BOTTOMLEFT", rosterPanel, "BOTTOMLEFT", 0, 0)
+    rosterResizeHandle:SetWidth(6)
+    rosterResizeHandle:EnableMouse(true)
+
+    -- Visual indicator (subtle line)
+    local resizeIndicator = rosterResizeHandle:CreateTexture(nil, "OVERLAY")
+    resizeIndicator:SetPoint("LEFT", 1, 0)
+    resizeIndicator:SetSize(2, 0)
+    resizeIndicator:SetPoint("TOP", 0, -4)
+    resizeIndicator:SetPoint("BOTTOM", 0, 4)
+    resizeIndicator:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0)
+    rosterResizeHandle.indicator = resizeIndicator
+
+    -- Show indicator on hover (visual feedback only)
+    rosterResizeHandle:SetScript("OnEnter", function(self)
+        resizeIndicator:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.6)
+    end)
+    rosterResizeHandle:SetScript("OnLeave", function(self)
+        if not self.isResizing then
+            resizeIndicator:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0)
+        end
+    end)
+
+    -- Resize logic
+    rosterResizeHandle:RegisterForDrag("LeftButton")
+    rosterResizeHandle:SetScript("OnDragStart", function(self)
+        self.isResizing = true
+        self.startX = GetCursorPosition() / UIParent:GetEffectiveScale()
+        self.startWidth = rosterPanel:GetWidth()
+        resizeIndicator:SetColorTexture(COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3], 0.8)
+    end)
+
+    rosterResizeHandle:SetScript("OnDragStop", function(self)
+        self.isResizing = false
+        resizeIndicator:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0)
+
+        -- Save the new width
+        GB.rosterWidth = rosterPanel:GetWidth()
+        ROSTER_WIDTH = GB.rosterWidth
+        GB:SaveWindowPosition()
+    end)
+
+    -- Update size while dragging
+    rosterResizeHandle:SetScript("OnUpdate", function(self)
+        if not self.isResizing then return end
+
+        local currentX = GetCursorPosition() / UIParent:GetEffectiveScale()
+        local deltaX = self.startX - currentX  -- Dragging left increases width
+        local newWidth = math.max(MIN_ROSTER_WIDTH, math.min(MAX_ROSTER_WIDTH, self.startWidth + deltaX))
+
+        -- Update roster panel width
+        rosterPanel:SetWidth(newWidth)
+
+        -- Update scroll frame right anchor to account for scrollbar
+        rosterScrollFrame:SetPoint("BOTTOMRIGHT", -14, 4)
+
+        -- Update content width
+        rosterContent:SetWidth(newWidth - 18)
+
+        -- Update chat scroll frame position
+        if GB.scrollFrame then
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -(newWidth + 24), 40)
+        end
+
+        -- Update chat scrollbar track position
+        if scrollBarTrack then
+            scrollBarTrack:SetPoint("TOPRIGHT", -(newWidth + 10), -100)
+            scrollBarTrack:SetPoint("BOTTOMRIGHT", -(newWidth + 10), 40)
+        end
+
+        -- Update scrollbar
+        updateRosterScrollBar()
+    end)
+
+    -- Function to update layout based on current roster width
+    local function updateRosterLayout()
+        local currentWidth = rosterPanel:GetWidth()
+
+        -- Update chat scroll frame position
+        if GB.scrollFrame then
+            GB.scrollFrame:SetPoint("BOTTOMRIGHT", -(currentWidth + 24), 40)
+        end
+
+        -- Update chat scrollbar track position
+        if scrollBarTrack then
+            scrollBarTrack:SetPoint("TOPRIGHT", -(currentWidth + 10), -100)
+            scrollBarTrack:SetPoint("BOTTOMRIGHT", -(currentWidth + 10), 40)
+        end
+
+        -- Update roster content width
+        rosterContent:SetWidth(currentWidth - 18)
+
+        -- Update scrollbar
+        updateRosterScrollBar()
+    end
+    self.updateRosterLayout = updateRosterLayout
+
+    -- Apply initial layout with restored width
+    updateRosterLayout()
 
     -- Input box container with guild-style border
     local inputBg = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
