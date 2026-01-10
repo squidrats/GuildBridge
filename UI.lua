@@ -1963,6 +1963,10 @@ function GB:CreateBridgeUI()
 
     -- Resize logic
     rosterResizeHandle:RegisterForDrag("LeftButton")
+    rosterResizeHandle.isResizing = false
+    rosterResizeHandle.startX = nil
+    rosterResizeHandle.startWidth = nil
+
     rosterResizeHandle:SetScript("OnDragStart", function(self)
         self.isResizing = true
         self.startX = GetCursorPosition() / UIParent:GetEffectiveScale()
@@ -1972,6 +1976,8 @@ function GB:CreateBridgeUI()
 
     rosterResizeHandle:SetScript("OnDragStop", function(self)
         self.isResizing = false
+        self.startX = nil
+        self.startWidth = nil
         resizeIndicator:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0)
 
         -- Save the new width
@@ -1983,9 +1989,15 @@ function GB:CreateBridgeUI()
     -- Update size while dragging
     rosterResizeHandle:SetScript("OnUpdate", function(self)
         if not self.isResizing then return end
+        -- Guard against nil values (shouldn't happen, but prevents jumps)
+        if not self.startX or not self.startWidth then return end
 
         local currentX = GetCursorPosition() / UIParent:GetEffectiveScale()
         local deltaX = self.startX - currentX  -- Dragging left increases width
+
+        -- Only apply if there's meaningful movement (prevents jumps from tiny movements)
+        if math.abs(deltaX) < 1 then return end
+
         local newWidth = math.max(MIN_ROSTER_WIDTH, math.min(MAX_ROSTER_WIDTH, self.startWidth + deltaX))
 
         -- Update roster panel width
