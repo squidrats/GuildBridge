@@ -1510,24 +1510,188 @@ function GB:CreateBridgeUI()
         GameTooltip:Hide()
     end)
 
-    -- Scroll frame for messages - chat area (leave room for scrollbar and roster on right)
-    -- Initial position will be adjusted by updatePageVisibility based on tab rows
-    self.scrollFrame = CreateFrame("ScrollingMessageFrame", nil, self.mainFrame)
-    self.scrollFrame:SetPoint("TOPLEFT", 10, -100)  -- Adjusted for new layout
-    self.scrollFrame:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 24), 40)  -- Room for scrollbar + roster
-    self.scrollFrame:SetFontObject(ChatFontNormal)
-    self.scrollFrame:SetJustifyH("LEFT")
-    self.scrollFrame:SetFading(false)
-    self.scrollFrame:SetMaxLines(500)
-    self.scrollFrame:EnableMouseWheel(true)
-    self.scrollFrame:SetHyperlinksEnabled(true)
-    self.scrollFrame:SetIndentedWordWrap(true)
-    self.scrollFrame:SetSpacing(2)  -- Line spacing for readability
+    -- Scroll frame container for messages - chat area (leave room for scrollbar and roster on right)
+    -- Using ScrollFrame + EditBox to allow text selection with Ctrl+C
+    local chatScrollFrame = CreateFrame("ScrollFrame", nil, self.mainFrame)
+    chatScrollFrame:SetPoint("TOPLEFT", 10, -100)  -- Adjusted for new layout
+    chatScrollFrame:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 24), 40)  -- Room for scrollbar + roster
 
     -- Chat area background - very subtle
-    local scrollBg = self.scrollFrame:CreateTexture(nil, "BACKGROUND")
+    local scrollBg = chatScrollFrame:CreateTexture(nil, "BACKGROUND")
     scrollBg:SetAllPoints()
     scrollBg:SetColorTexture(unpack(COLORS.bgChat))
+
+    -- EditBox for selectable text (non-editable)
+    local chatEditBox = CreateFrame("EditBox", nil, chatScrollFrame)
+    chatEditBox:SetMultiLine(true)
+    chatEditBox:SetAutoFocus(false)
+    chatEditBox:SetFontObject(ChatFontNormal)
+    chatEditBox:SetTextColor(unpack(COLORS.textNormal))
+    chatEditBox:SetWidth(chatScrollFrame:GetWidth() or 300)
+    chatEditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    chatEditBox:EnableMouse(true)
+    chatEditBox:SetHyperlinksEnabled(true)
+
+    -- Make it look like it's not editable but allow selection
+    chatEditBox:SetScript("OnChar", function(self) end)  -- Ignore typed characters
+    chatEditBox:SetScript("OnKeyDown", function(self, key)
+        -- Allow Ctrl+C and Ctrl+A, block everything else that would modify text
+        if IsControlKeyDown() and (key == "C" or key == "A") then
+            return  -- Allow copy and select all
+        end
+        -- Block text-modifying keys
+        if key == "BACKSPACE" or key == "DELETE" or key == "ENTER" then
+            return
+        end
+    end)
+
+    -- Prevent text modification but allow selection
+    chatEditBox:SetScript("OnTextChanged", function(self)
+        -- If text was modified (not by us), restore it
+        if self.expectedText and self:GetText() ~= self.expectedText then
+            self:SetText(self.expectedText)
+        end
+    end)
+
+    chatScrollFrame:SetScrollChild(chatEditBox)
+    self.chatScrollFrame = chatScrollFrame
+    self.chatEditBox = chatEditBox
+
+    -- Clear selection when clicking outside the EditBox
+    -- Listen for global mouse clicks and clear focus if click is outside
+    local clickCatcher = CreateFrame("Frame", nil, UIParent)
+    clickCatcher:RegisterEvent("GLOBAL_MOUSE_DOWN")
+    clickCatcher:SetScript("OnEvent", function(frame, event)
+        if event == "GLOBAL_MOUSE_DOWN" then
+            -- Check if mouse is over the chat EditBox
+            if chatEditBox:HasFocus() and not MouseIsOver(chatEditBox) and not MouseIsOver(chatScrollFrame) then
+                chatEditBox:ClearFocus()
+                chatEditBox:HighlightText(0, 0)  -- Clear selection
+            end
+        end
+    end)
+
+    -- Create a compatibility layer so existing code using scrollFrame still works
+    -- This wraps the new EditBox-based system to mimic ScrollingMessageFrame API
+    self.scrollFrame = {
+        _editBox = chatEditBox,
+        _scrollFrame = chatScrollFrame,
+        _messages = {},
+        _maxLines = 500,
+
+        AddMessage = function(self, msg)
+            table.insert(self._messages, msg)
+            -- Trim to max lines
+            while #self._messages > self._maxLines do
+                table.remove(self._messages, 1)
+            end
+            -- Rebuild text
+            local fullText = table.concat(self._messages, "\n")
+            self._editBox.expectedText = fullText
+            self._editBox:SetText(fullText)
+            -- Auto-scroll to bottom and update scrollbar
+            C_Timer.After(0.01, function()
+                local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+                self._scrollFrame:SetVerticalScroll(scrollMax)
+                -- Update the scrollbar if available
+                if GB.updateScrollBar then
+                    GB.updateScrollBar()
+                end
+            end)
+        end,
+
+        Clear = function(self)
+            self._messages = {}
+            self._editBox.expectedText = ""
+            self._editBox:SetText("")
+        end,
+
+        GetNumMessages = function(self)
+            return #self._messages
+        end,
+
+        SetScrollOffset = function(self, offset)
+            -- Convert offset (lines from bottom) to scroll position
+            local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+            local _, fontHeight = self._editBox:GetFont()
+            local lineHeight = fontHeight or 14
+            local scrollPos = scrollMax - (offset * lineHeight)
+            self._scrollFrame:SetVerticalScroll(math.max(0, scrollPos))
+        end,
+
+        GetScrollOffset = function(self)
+            local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+            local currentScroll = self._scrollFrame:GetVerticalScroll()
+            local _, fontHeight = self._editBox:GetFont()
+            local lineHeight = fontHeight or 14
+            return math.floor((scrollMax - currentScroll) / lineHeight)
+        end,
+
+        ScrollUp = function(self)
+            local current = self._scrollFrame:GetVerticalScroll()
+            local _, fontHeight = self._editBox:GetFont()
+            local lineHeight = fontHeight or 14
+            self._scrollFrame:SetVerticalScroll(math.max(0, current - lineHeight))
+        end,
+
+        ScrollDown = function(self)
+            local current = self._scrollFrame:GetVerticalScroll()
+            local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+            local _, fontHeight = self._editBox:GetFont()
+            local lineHeight = fontHeight or 14
+            self._scrollFrame:SetVerticalScroll(math.min(scrollMax, current + lineHeight))
+        end,
+
+        ScrollToBottom = function(self)
+            local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+            self._scrollFrame:SetVerticalScroll(scrollMax)
+        end,
+
+        GetHeight = function(self)
+            return self._scrollFrame:GetHeight()
+        end,
+
+        GetFontObject = function(self)
+            return self._editBox:GetFontObject()
+        end,
+
+        GetSpacing = function(self)
+            return 0  -- EditBox doesn't have spacing like ScrollingMessageFrame
+        end,
+
+        SetPoint = function(self, ...)
+            self._scrollFrame:SetPoint(...)
+        end,
+
+        Show = function(self)
+            self._scrollFrame:Show()
+        end,
+
+        Hide = function(self)
+            self._scrollFrame:Hide()
+        end,
+
+        IsVisible = function(self)
+            return self._scrollFrame:IsVisible()
+        end,
+
+        HookScript = function(self, event, handler)
+            self._scrollFrame:HookScript(event, handler)
+        end,
+
+        SetScript = function(self, event, handler)
+            if event == "OnMouseWheel" then
+                self._scrollFrame:EnableMouseWheel(true)
+                self._scrollFrame:SetScript(event, handler)
+            elseif event == "OnHyperlinkClick" then
+                self._editBox:SetScript(event, handler)
+            elseif event == "OnMouseUp" then
+                self._scrollFrame:SetScript(event, handler)
+            else
+                self._scrollFrame:SetScript(event, handler)
+            end
+        end,
+    }
 
     -- Scrollbar track (visual background) - positioned to left of roster panel
     local scrollBarTrack = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
@@ -1564,114 +1728,72 @@ function GB:CreateBridgeUI()
     -- Track if we're programmatically updating the scrollbar (to avoid feedback loop)
     local updatingScrollBar = false
 
-    -- Estimate how many lines fit in the visible area
-    local function getVisibleLineCount()
-        local frameHeight = self.scrollFrame:GetHeight()
-        local _, fontHeight = self.scrollFrame:GetFontObject():GetFont()
-        local spacing = self.scrollFrame:GetSpacing() or 0
-        local lineHeight = fontHeight + spacing
-        if lineHeight <= 0 then lineHeight = 14 end  -- Fallback
-        return math.max(1, math.floor(frameHeight / lineHeight))
-    end
-
-    -- Update scrollbar to reflect current scroll position
-    -- ScrollingMessageFrame: offset 0 = viewing bottom (newest), higher offset = viewing older (top)
-    -- Slider: value 0 = thumb at top (oldest), value max = thumb at bottom (newest)
-    -- So we need to INVERT: sliderValue = maxOffset - scrollOffset
+    -- Update scrollbar to reflect current scroll position for EditBox-based scrolling
     local function updateScrollBar()
-        local numMessages = self.scrollFrame:GetNumMessages()
-        local visibleLines = getVisibleLineCount()
-        -- Max offset is when first message is at bottom of visible area
-        local maxOffset = math.max(0, numMessages - visibleLines)
+        local scrollMax = chatScrollFrame:GetVerticalScrollRange()
 
-        if maxOffset <= 0 then
-            -- All messages fit in view, no scrolling needed
+        if scrollMax <= 0 then
+            -- All content fits in view, no scrolling needed
             scrollBarTrack:Hide()
             return
         end
 
-        local currentOffset = self.scrollFrame:GetScrollOffset()
-        -- Clamp current offset to valid range
-        if currentOffset > maxOffset then
-            currentOffset = maxOffset
-        end
+        local currentScroll = chatScrollFrame:GetVerticalScroll()
 
         updatingScrollBar = true
-        scrollBar:SetMinMaxValues(0, maxOffset)
-        -- Invert: when offset is 0 (bottom/newest), slider should be at max (thumb at bottom)
-        -- When offset is max (top/oldest), slider should be at 0 (thumb at top)
-        scrollBar:SetValue(maxOffset - currentOffset)
+        scrollBar:SetMinMaxValues(0, scrollMax)
+        scrollBar:SetValue(currentScroll)
         updatingScrollBar = false
         scrollBarTrack:Show()
     end
     self.updateScrollBar = updateScrollBar
 
-    -- Scrollbar dragged by user - convert slider value back to scroll offset
+    -- Scrollbar dragged by user
     scrollBar:SetScript("OnValueChanged", function(bar, value)
         if updatingScrollBar then return end
-        local min, max = bar:GetMinMaxValues()
-        -- Invert: slider value 0 = oldest (max offset), slider value max = newest (offset 0)
-        local newOffset = math.floor(max - value + 0.5)
-        self.scrollFrame:SetScrollOffset(newOffset)
+        chatScrollFrame:SetVerticalScroll(value)
     end)
 
     -- Mouse wheel on scrollbar
     scrollBar:SetScript("OnMouseWheel", function(bar, delta)
-        local min, max = bar:GetMinMaxValues()
-        local val = bar:GetValue()
-        -- Wheel up = show older messages = decrease slider value (thumb moves up)
-        -- Wheel down = show newer messages = increase slider value (thumb moves down)
+        local current = chatScrollFrame:GetVerticalScroll()
+        local scrollMax = chatScrollFrame:GetVerticalScrollRange()
+        local step = 42  -- About 3 lines
         if delta > 0 then
-            bar:SetValue(math.max(min, val - 3))
+            chatScrollFrame:SetVerticalScroll(math.max(0, current - step))
         else
-            bar:SetValue(math.min(max, val + 3))
-        end
-    end)
-
-    -- Mouse wheel on message area
-    self.scrollFrame:SetScript("OnMouseWheel", function(frame, delta)
-        if delta > 0 then
-            for i = 1, 3 do frame:ScrollUp() end
-        else
-            for i = 1, 3 do frame:ScrollDown() end
+            chatScrollFrame:SetVerticalScroll(math.min(scrollMax, current + step))
         end
         updateScrollBar()
     end)
 
-    self.scrollFrame:SetScript("OnHyperlinkClick", function(frame, link, text, button)
-        -- Shift+click on a player link to copy that message line
-        if IsShiftKeyDown() and link:match("^player:") then
-            -- Find the message containing this player link in history
-            for i = #GB.messageHistory, 1, -1 do
-                local msg = GB.messageHistory[i]
-                if msg.formatted and msg.formatted:find(link, 1, true) then
-                    showCopyTextDialog(msg.formatted)
-                    return
-                end
-            end
+    -- Mouse wheel on message area
+    chatScrollFrame:EnableMouseWheel(true)
+    chatScrollFrame:SetScript("OnMouseWheel", function(frame, delta)
+        local current = frame:GetVerticalScroll()
+        local scrollMax = frame:GetVerticalScrollRange()
+        local step = 42  -- About 3 lines
+        if delta > 0 then
+            frame:SetVerticalScroll(math.max(0, current - step))
+        else
+            frame:SetVerticalScroll(math.min(scrollMax, current + step))
         end
+        updateScrollBar()
+    end)
+
+    -- Hyperlink clicks on the EditBox
+    chatEditBox:SetScript("OnHyperlinkClick", function(frame, link, text, button)
         SetItemRef(link, text, button)
     end)
 
-    -- Right-click on scroll frame to show copy menu
-    self.scrollFrame:SetScript("OnMouseUp", function(frame, button)
-        if button == "RightButton" then
-            GB:ShowCopyChatMenu()
-        end
-    end)
-
     -- Update scrollbar when frame is shown
-    self.scrollFrame:HookScript("OnShow", updateScrollBar)
+    chatScrollFrame:HookScript("OnShow", updateScrollBar)
 
-    -- Hook AddMessage to update scrollbar when new messages arrive
-    local originalAddMessage = self.scrollFrame.AddMessage
-    self.scrollFrame.AddMessage = function(frame, ...)
-        originalAddMessage(frame, ...)
-        -- Only update if at bottom (offset 0) to keep scroll position when reading history
-        if frame:GetScrollOffset() == 0 then
-            updateScrollBar()
-        end
-    end
+    -- Update EditBox width when scroll frame size changes
+    chatScrollFrame:SetScript("OnSizeChanged", function(frame, width, height)
+        chatEditBox:SetWidth(width)
+        updateScrollBar()
+    end)
 
     -- ============================================================================
     -- ROSTER PANEL (right side)
