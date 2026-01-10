@@ -324,20 +324,13 @@ function GB:RefreshRoster()
             entry:EnableMouse(true)
             entry:SetScript("OnEnter", function(self)
                 self.highlight:Show()
-                -- Show tooltip with full info
+                -- Show tooltip with connection info
                 GameTooltip:SetOwner(self, "ANCHOR_LEFT")
                 local tooltipName = self.memberData.name or "Unknown"
                 if self.memberData.realm then
                     tooltipName = tooltipName .. "-" .. self.memberData.realm
                 end
                 GameTooltip:SetText(tooltipName, 1, 1, 1)
-                if self.memberData.guildName then
-                    local guildLine = "<" .. self.memberData.guildName .. ">"
-                    if self.memberData.guildHomeRealm then
-                        guildLine = guildLine .. " " .. self.memberData.guildHomeRealm
-                    end
-                    GameTooltip:AddLine(guildLine, COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3])
-                end
                 if self.memberData.isMe then
                     GameTooltip:AddLine("(You)", 0.7, 0.7, 0.7)
                 elseif self.memberData.isBNet then
@@ -367,8 +360,11 @@ function GB:RefreshRoster()
         entry.memberData = member
         entry:SetPoint("TOPLEFT", 0, -yOffset)
 
-        -- Format display name
+        -- Format display name with realm (like native guild roster)
         local displayName = member.name or "Unknown"
+        if member.realm and member.realm ~= "" then
+            displayName = displayName .. "-" .. member.realm
+        end
         if member.isMe then
             displayName = displayName .. " *"
         end
