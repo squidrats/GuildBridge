@@ -175,58 +175,101 @@ function GB:RequestFullRoster(targetGameAccountID, guildClubId, targetType)
     end
 end
 
--- Broadcast roster delta to all connected bridge users in other guilds
-function GB:BroadcastRosterDelta(deltas)
+-- Actually send the accumulated deltas (called after throttle delay)
+local function doSendRosterDeltas()
     if not IsInGuild() then return end
 
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then return end
+    if not myGuildName or not GB.allowedGuilds[myGuildName] then return end
 
-    local filterKey = self:GetMyGuildFilterKey()
+    local filterKey = GB:GetMyGuildFilterKey()
     if not filterKey then return end
 
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     if not myGuildClubId then return end
 
-    local roster = self.guildRosters[filterKey]
+    local roster = GB.guildRosters[filterKey]
     if not roster then return end
 
-    -- Throttle broadcasts
-    local now = GetTime()
-    if now - self.lastRosterBroadcast < self.ROSTER_SYNC_THROTTLE then
-        return
-    end
-    self.lastRosterBroadcast = now
+    local deltas = GB.pendingRosterDeltas
 
-    -- Build delta string
+    -- Build delta string from accumulated changes
     local deltaStr = ""
+    local seenRemoved = {}
     for _, name in ipairs(deltas.removed or {}) do
-        if deltaStr ~= "" then deltaStr = deltaStr .. "," end
-        deltaStr = deltaStr .. "-" .. name
+        -- Skip if this person was also added (they logged in then out, net effect is removed)
+        -- But only include in removed if they're not also in added
+        if not deltas.added[name] and not seenRemoved[name] then
+            seenRemoved[name] = true
+            if deltaStr ~= "" then deltaStr = deltaStr .. "," end
+            deltaStr = deltaStr .. "-" .. name
+        end
     end
     for name, info in pairs(deltas.added or {}) do
-        if deltaStr ~= "" then deltaStr = deltaStr .. "," end
-        deltaStr = deltaStr .. "+" .. name .. ":" .. (info.realm or "") .. ":" .. self:AbbrevClass(info.class)
+        -- Skip if this person was removed after being added (net effect depends on order)
+        -- Since we track final state in roster, check if they're currently online
+        if roster.members[name] then
+            if deltaStr ~= "" then deltaStr = deltaStr .. "," end
+            deltaStr = deltaStr .. "+" .. name .. ":" .. (info.realm or "") .. ":" .. GB:AbbrevClass(info.class)
+        end
     end
+
+    -- Clear pending deltas
+    GB.pendingRosterDeltas = { added = {}, removed = {} }
 
     if deltaStr == "" then return end
 
     local payload = "[GBRD]" .. roster.version .. "|" .. myGuildClubId .. "|" .. deltaStr
 
     -- Send to all connected bridge users in OTHER guilds
-    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+    for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
         -- Skip users in same guild
         if info.guildClubId ~= myGuildClubId then
-            self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+            GB:QueueBNetMessage(gameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
         end
     end
 
     -- Send to whisper alts in other guilds
-    for altName, info in pairs(self.connectedWhisperAlts) do
+    for altName, info in pairs(GB.connectedWhisperAlts) do
         if info.guildClubId ~= myGuildClubId then
-            self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
+            GB:QueueWhisperMessage(GB.BRIDGE_ADDON_PREFIX, payload, altName)
         end
     end
+end
+
+-- Broadcast roster delta to all connected bridge users in other guilds
+-- Accumulates deltas and sends after throttle delay to batch rapid changes
+function GB:BroadcastRosterDelta(deltas)
+    if not IsInGuild() then return end
+
+    -- Accumulate the deltas
+    for _, name in ipairs(deltas.removed or {}) do
+        table.insert(self.pendingRosterDeltas.removed, name)
+        -- If they were pending to be added, remove from added
+        self.pendingRosterDeltas.added[name] = nil
+    end
+    for name, info in pairs(deltas.added or {}) do
+        self.pendingRosterDeltas.added[name] = info
+    end
+
+    -- Throttle: schedule send after delay if not already scheduled
+    local now = GetTime()
+    if now - self.lastRosterBroadcast >= self.ROSTER_SYNC_THROTTLE then
+        -- Can send immediately
+        self.lastRosterBroadcast = now
+        self.rosterDeltaTimerScheduled = false
+        doSendRosterDeltas()
+    elseif not self.rosterDeltaTimerScheduled then
+        -- Schedule send after throttle period (only if not already scheduled)
+        self.rosterDeltaTimerScheduled = true
+        local delay = self.ROSTER_SYNC_THROTTLE - (now - self.lastRosterBroadcast)
+        C_Timer.After(delay, function()
+            self.rosterDeltaTimerScheduled = false
+            self.lastRosterBroadcast = GetTime()
+            doSendRosterDeltas()
+        end)
+    end
+    -- If timer is already scheduled, deltas will be sent when it fires
 end
 
 -- Process guild roster update event
@@ -512,6 +555,26 @@ function GB:CleanupStaleRosters()
     for guildClubId, pending in pairs(self.pendingRosterChunks) do
         if now - pending.startTime > 30 then
             self.pendingRosterChunks[guildClubId] = nil
+        end
+    end
+end
+
+-- Request roster re-sync from all connected users in other guilds
+-- Called periodically to recover from missed deltas
+function GB:RequestRosterResync()
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+
+    -- Request from BNet bridge users
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        if info.guildClubId and info.guildClubId ~= myGuildClubId then
+            self:RequestFullRoster(gameAccountID, info.guildClubId, "bnet")
+        end
+    end
+
+    -- Request from whisper alts
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if info.guildClubId and info.guildClubId ~= myGuildClubId then
+            self:RequestFullRoster(altName, info.guildClubId, "whisper")
         end
     end
 end

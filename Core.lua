@@ -34,6 +34,8 @@ GB.isProcessingQueue = false  -- Flag to track if queue processor is running
 -- Roster sync state
 GB.guildRosters = {}          -- filterKey -> { members = {}, version = 0, lastUpdate = 0 }
 GB.pendingRosterChunks = {}   -- guildClubId -> { chunks = {}, total = n, version = v, startTime = t }
+GB.pendingRosterDeltas = { added = {}, removed = {} }  -- Accumulate deltas during throttle
+GB.rosterDeltaTimerScheduled = false  -- Prevent multiple timers
 GB.ROSTER_SYNC_THROTTLE = 2   -- seconds between roster broadcasts
 GB.ROSTER_CHUNK_SIZE = 200    -- bytes per chunk payload
 GB.lastRosterBroadcast = 0    -- timestamp of last roster broadcast

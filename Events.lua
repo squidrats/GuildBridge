@@ -52,6 +52,13 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end)
 
+            -- Periodic roster re-sync every 2 minutes to recover from any missed deltas
+            C_Timer.NewTicker(120, function()
+                if GB.RequestRosterResync then
+                    GB:RequestRosterResync()
+                end
+            end)
+
             -- More frequent ping for whisper alts (every 30 seconds) since we can't detect their logout
             C_Timer.NewTicker(30, function()
                 GB:ForceSendWhisperHandshake()
@@ -107,6 +114,14 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 GB:ForceSendWhisperHandshake()
             end)
             -- Capture initial roster after a delay (guild roster needs time to load)
+            -- Request fresh roster data from server first
+            C_Timer.After(3, function()
+                if C_GuildInfo and C_GuildInfo.GuildRoster then
+                    C_GuildInfo.GuildRoster()  -- Request fresh roster from server
+                elseif GuildRoster then
+                    GuildRoster()  -- Fallback for older API
+                end
+            end)
             C_Timer.After(5, function()
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
