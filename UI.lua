@@ -68,6 +68,7 @@ local setRealmButton
 local realmInputDialog
 local allTabContextMenu
 local forgetAllButton
+local copyTextDialog
 
 -- Update tab highlights based on current filter
 updateTabHighlights = function()
@@ -433,6 +434,211 @@ local function showAllTabContextMenu()
     allTabContextMenu:ClearAllPoints()
     allTabContextMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
     allTabContextMenu:Show()
+end
+
+-- Strip WoW color codes and hyperlinks from text
+local function stripColorCodes(text)
+    if not text then return "" end
+    -- Remove hyperlinks but keep the visible text: |Htype:data|h[visible]|h -> [visible]
+    text = text:gsub("|H[^|]*|h", "")
+    text = text:gsub("|h", "")
+    -- Remove color codes: |cffXXXXXX -> empty, |r -> empty
+    text = text:gsub("|c%x%x%x%x%x%x%x%x", "")
+    text = text:gsub("|r", "")
+    -- Remove any remaining pipe escapes
+    text = text:gsub("||", "|")
+    return text
+end
+
+-- Show copy text dialog
+local function showCopyTextDialog(text)
+    if not copyTextDialog then
+        copyTextDialog = CreateFrame("Frame", "GuildBridgeCopyDialog", UIParent, "BackdropTemplate")
+        copyTextDialog:SetSize(400, 120)
+        copyTextDialog:SetPoint("CENTER")
+        copyTextDialog:SetFrameStrata("DIALOG")
+        copyTextDialog:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        })
+        copyTextDialog:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+        copyTextDialog:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+        copyTextDialog:EnableMouse(true)
+        copyTextDialog:SetMovable(true)
+        copyTextDialog:RegisterForDrag("LeftButton")
+        copyTextDialog:SetScript("OnDragStart", copyTextDialog.StartMoving)
+        copyTextDialog:SetScript("OnDragStop", copyTextDialog.StopMovingOrSizing)
+
+        copyTextDialog.title = copyTextDialog:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        copyTextDialog.title:SetPoint("TOP", 0, -10)
+        copyTextDialog.title:SetText("Copy Text (Ctrl+C)")
+        copyTextDialog.title:SetTextColor(COLORS.guildGreen[1], COLORS.guildGreen[2], COLORS.guildGreen[3])
+
+        -- Scrollable edit box for longer messages
+        local scrollFrame = CreateFrame("ScrollFrame", nil, copyTextDialog, "UIPanelScrollFrameTemplate")
+        scrollFrame:SetPoint("TOPLEFT", 12, -30)
+        scrollFrame:SetPoint("BOTTOMRIGHT", -30, 40)
+
+        copyTextDialog.editBox = CreateFrame("EditBox", nil, scrollFrame)
+        copyTextDialog.editBox:SetMultiLine(true)
+        copyTextDialog.editBox:SetFontObject(ChatFontNormal)
+        copyTextDialog.editBox:SetWidth(350)
+        copyTextDialog.editBox:SetAutoFocus(true)
+        copyTextDialog.editBox:SetTextColor(unpack(COLORS.textNormal))
+        scrollFrame:SetScrollChild(copyTextDialog.editBox)
+
+        copyTextDialog.closeButton = CreateFrame("Button", nil, copyTextDialog, "UIPanelButtonTemplate")
+        copyTextDialog.closeButton:SetSize(80, 22)
+        copyTextDialog.closeButton:SetPoint("BOTTOM", 0, 10)
+        copyTextDialog.closeButton:SetText("Close")
+        copyTextDialog.closeButton:SetScript("OnClick", function()
+            copyTextDialog:Hide()
+        end)
+
+        copyTextDialog.editBox:SetScript("OnEscapePressed", function()
+            copyTextDialog:Hide()
+        end)
+
+        copyTextDialog:Hide()
+    end
+
+    -- Strip color codes and set text
+    local cleanText = stripColorCodes(text)
+    copyTextDialog.editBox:SetText(cleanText)
+    copyTextDialog:Show()
+    copyTextDialog.editBox:HighlightText()
+    copyTextDialog.editBox:SetFocus()
+end
+
+-- Export for use elsewhere
+GB.ShowCopyTextDialog = showCopyTextDialog
+
+-- Copy chat context menu
+local copyChatMenu
+
+local function ensureCopyChatMenu()
+    if copyChatMenu then return end
+
+    copyChatMenu = CreateFrame("Frame", "GuildBridgeCopyChatMenu", UIParent, "BackdropTemplate")
+    copyChatMenu:SetSize(130, 72)
+    copyChatMenu:SetFrameStrata("DIALOG")
+    copyChatMenu:SetBackdrop({
+        bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+        edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    copyChatMenu:SetBackdropColor(0.1, 0.1, 0.1, 0.95)
+    copyChatMenu:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
+    copyChatMenu:Hide()
+
+    -- Copy All button
+    local copyAllButton = CreateFrame("Button", nil, copyChatMenu)
+    copyAllButton:SetSize(120, 20)
+    copyAllButton:SetPoint("TOP", copyChatMenu, "TOP", 0, -8)
+    copyAllButton.text = copyAllButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    copyAllButton.text:SetPoint("CENTER")
+    copyAllButton.text:SetText("Copy All Messages")
+    copyAllButton.text:SetTextColor(1, 0.82, 0)
+    copyAllButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    copyAllButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(1, 0.82, 0)
+    end)
+    copyAllButton:SetScript("OnClick", function()
+        copyChatMenu:Hide()
+        -- Gather all visible messages based on current filter
+        local lines = {}
+        for _, msg in ipairs(GB.messageHistory) do
+            if GB.currentFilter == nil or msg.filterKey == GB.currentFilter then
+                local displayMsg = GB.currentFilter and msg.formattedNoTag or msg.formatted
+                table.insert(lines, displayMsg)
+            end
+        end
+        if #lines > 0 then
+            showCopyTextDialog(table.concat(lines, "\n"))
+        end
+    end)
+
+    -- Copy Last 10 button
+    local copyRecentButton = CreateFrame("Button", nil, copyChatMenu)
+    copyRecentButton:SetSize(120, 20)
+    copyRecentButton:SetPoint("TOP", copyAllButton, "BOTTOM", 0, -2)
+    copyRecentButton.text = copyRecentButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    copyRecentButton.text:SetPoint("CENTER")
+    copyRecentButton.text:SetText("Copy Last 10")
+    copyRecentButton.text:SetTextColor(1, 0.82, 0)
+    copyRecentButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    copyRecentButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(1, 0.82, 0)
+    end)
+    copyRecentButton:SetScript("OnClick", function()
+        copyChatMenu:Hide()
+        -- Gather last 10 visible messages
+        local lines = {}
+        for i = #GB.messageHistory, 1, -1 do
+            local msg = GB.messageHistory[i]
+            if GB.currentFilter == nil or msg.filterKey == GB.currentFilter then
+                local displayMsg = GB.currentFilter and msg.formattedNoTag or msg.formatted
+                table.insert(lines, 1, displayMsg)
+                if #lines >= 10 then break end
+            end
+        end
+        if #lines > 0 then
+            showCopyTextDialog(table.concat(lines, "\n"))
+        end
+    end)
+
+    -- Cancel button
+    local cancelButton = CreateFrame("Button", nil, copyChatMenu)
+    cancelButton:SetSize(120, 20)
+    cancelButton:SetPoint("TOP", copyRecentButton, "BOTTOM", 0, -2)
+    cancelButton.text = cancelButton:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    cancelButton.text:SetPoint("CENTER")
+    cancelButton.text:SetText("Cancel")
+    cancelButton.text:SetTextColor(0.7, 0.7, 0.7)
+    cancelButton:SetScript("OnEnter", function(self)
+        self.text:SetTextColor(1, 1, 1)
+    end)
+    cancelButton:SetScript("OnLeave", function(self)
+        self.text:SetTextColor(0.7, 0.7, 0.7)
+    end)
+    cancelButton:SetScript("OnClick", function()
+        copyChatMenu:Hide()
+    end)
+
+    copyChatMenu:SetScript("OnShow", function(self)
+        self:SetPropagateKeyboardInput(true)
+    end)
+    copyChatMenu:SetScript("OnKeyDown", function(self, key)
+        if key == "ESCAPE" then
+            self:SetPropagateKeyboardInput(false)
+            self:Hide()
+        end
+    end)
+    copyChatMenu:SetScript("OnEvent", function(self, event)
+        if event == "GLOBAL_MOUSE_DOWN" then
+            if not MouseIsOver(self) and not (copyTextDialog and copyTextDialog:IsShown()) then
+                self:Hide()
+            end
+        end
+    end)
+    copyChatMenu:RegisterEvent("GLOBAL_MOUSE_DOWN")
+end
+
+-- Show copy chat menu at cursor
+function GB:ShowCopyChatMenu()
+    ensureCopyChatMenu()
+    local scale = UIParent:GetEffectiveScale()
+    local x, y = GetCursorPosition()
+    copyChatMenu:ClearAllPoints()
+    copyChatMenu:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x / scale, y / scale)
+    copyChatMenu:Show()
 end
 
 -- Create a guild filter tab with modern styling
@@ -1085,7 +1291,25 @@ function GB:CreateBridgeUI()
     end)
 
     self.scrollFrame:SetScript("OnHyperlinkClick", function(frame, link, text, button)
+        -- Shift+click on a player link to copy that message line
+        if IsShiftKeyDown() and link:match("^player:") then
+            -- Find the message containing this player link in history
+            for i = #GB.messageHistory, 1, -1 do
+                local msg = GB.messageHistory[i]
+                if msg.formatted and msg.formatted:find(link, 1, true) then
+                    showCopyTextDialog(msg.formatted)
+                    return
+                end
+            end
+        end
         SetItemRef(link, text, button)
+    end)
+
+    -- Right-click on scroll frame to show copy menu
+    self.scrollFrame:SetScript("OnMouseUp", function(frame, button)
+        if button == "RightButton" then
+            GB:ShowCopyChatMenu()
+        end
     end)
 
     -- Update scrollbar when frame is shown

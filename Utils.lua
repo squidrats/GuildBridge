@@ -43,11 +43,17 @@ function GB:FindOnlineWoWFriends()
                 for j = 1, numGames do
                     local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
                     if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
+                        -- richPresence contains guild name like "In <Guild Name>"
+                        local guildName = nil
+                        if gameInfo.richPresence then
+                            guildName = gameInfo.richPresence:match("^In <(.+)>$")
+                        end
                         table.insert(friends, {
                             gameAccountID = gameInfo.gameAccountID,
                             characterName = gameInfo.characterName,
                             realmName = gameInfo.realmName,
                             battleTag = accountInfo.battleTag,
+                            guildName = guildName,
                         })
                     end
                 end

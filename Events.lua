@@ -93,12 +93,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         if not initialHandshakeDone then
             initialHandshakeDone = true
             -- Send handshake after short delay to let everything load
-            C_Timer.After(2, function()
-                GB:ForceSendHandshake()
-                GB:ForceSendWhisperHandshake()  -- Also ping registered alts
-            end)
-            -- Send again after 5 seconds for reliability
-            C_Timer.After(7, function()
+            C_Timer.After(3, function()
                 GB:ForceSendHandshake()
                 GB:ForceSendWhisperHandshake()
             end)
@@ -112,6 +107,14 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
     elseif event == "BN_FRIEND_INFO_CHANGED" then
+        -- Debounce: This event fires VERY frequently (zone changes, level ups, etc.)
+        -- Only process once every FRIEND_INFO_DEBOUNCE seconds
+        local now = GetTime()
+        if now - GB.lastFriendInfoChange < GB.FRIEND_INFO_DEBOUNCE then
+            return
+        end
+        GB.lastFriendInfoChange = now
+
         -- Build set of previous friend IDs
         local previousFriendIDs = {}
         for _, friend in ipairs(GB.onlineFriends) do
@@ -136,10 +139,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         GB:UpdateConnectionIndicators()
 
         -- Send handshake to any NEW friends
-        for gameAccountID, _ in pairs(currentFriendIDs) do
-            if not previousFriendIDs[gameAccountID] then
-                -- New friend came online, send handshake to them
-                GB:SendHandshakeToFriend(gameAccountID)
+        -- We send to all friends - they'll only respond if they're in an allowed guild
+        for _, friend in ipairs(GB.onlineFriends) do
+            if not previousFriendIDs[friend.gameAccountID] then
+                GB:SendHandshakeToFriend(friend.gameAccountID)
             end
         end
 

@@ -268,22 +268,33 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
     -- Get my guild's clubId to skip same-guild recipients for guild messages
     local myGuildClubId = getGuildClubId()
 
-    -- Send to all online WoW friends
+    -- Get my guild name for same-guild check
+    local myGuildName = GetGuildInfo("player")
+
+    -- Send to online WoW friends who are in an allowed guild or are confirmed bridge users
     for _, friend in ipairs(self.onlineFriends) do
-        -- For guild messages, skip recipients who are in the same guild (they get CHAT_MSG_GUILD directly)
-        local shouldSend = true
-        if sourceType == "G" and myGuildClubId then
-            local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
-            if connInfo and connInfo.guildClubId == myGuildClubId then
+        local shouldSend = false
+        local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
+
+        -- Check if friend is in an allowed guild (from BNet API) or is a confirmed bridge user
+        if connInfo then
+            -- Confirmed bridge user - send to them
+            shouldSend = true
+            -- But skip if they're in the same guild and this is a guild message
+            if sourceType == "G" and myGuildClubId and connInfo.guildClubId == myGuildClubId then
+                shouldSend = false
+            end
+        elseif friend.guildName and self.allowedGuilds[friend.guildName] then
+            -- Friend is in an allowed guild (from BNet richPresence) - send to them
+            shouldSend = true
+            -- But skip if they're in the same guild as me and this is a guild message
+            if sourceType == "G" and friend.guildName == myGuildName then
                 shouldSend = false
             end
         end
 
         if shouldSend then
-            local ok, err = pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
-            if not ok then
-                print("GuildBridge: error sending to", friend.characterName or "unknown", ":", err)
-            end
+            self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
         end
     end
 end
@@ -321,16 +332,21 @@ function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourc
 
     local payload = buildBridgePayload(self, originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId)
 
-    -- Send to all connected whisper alts
+    -- Send to connected whisper alts in allowed guilds
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 and altName ~= excludeSender then
-            -- For guild messages, skip alts in the same guild (they get CHAT_MSG_GUILD directly)
-            local shouldSend = true
-            if sourceType == "G" and myGuildClubId and info.guildClubId == myGuildClubId then
-                shouldSend = false
-            end
-            if shouldSend then
-                C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+            -- Must be in an allowed guild
+            if not info.guildName or not self.allowedGuilds[info.guildName] then
+                -- Skip - not in allowed guild
+            else
+                -- For guild messages, skip alts in the same guild (they get CHAT_MSG_GUILD directly)
+                local shouldSend = true
+                if sourceType == "G" and myGuildClubId and info.guildClubId == myGuildClubId then
+                    shouldSend = false
+                end
+                if shouldSend then
+                    self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
+                end
             end
         end
     end
@@ -663,8 +679,46 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
 
     -- Re-relay to other friends (mesh network) - only for guild chat messages ("G")
     -- Don't re-relay UI messages ("U") or already-relayed messages ("R")
+    -- OPTIMIZATION: Only relay to friends in DIFFERENT guilds than the message origin
+    -- Friends in the same guild as the sender likely already received it
     if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
-        self:SendBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+        self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
+    end
+end
+
+-- Relay message only to friends in DIFFERENT guilds than the message origin
+-- This prevents redundant sends to people who likely already received it
+function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilter, messageId, originGuild, originGuildRealm, originGuildHomeRealm, classFile, originGuildClubId)
+    if not messageText or messageText == "" then
+        return
+    end
+
+    local payload = buildBridgePayload(self, originName, originRealm, messageText, "R", targetFilter, messageId, originGuild, originGuildRealm, originGuildHomeRealm, classFile, originGuildClubId)
+
+    -- Only relay to friends in DIFFERENT guilds
+    for _, friend in ipairs(self.onlineFriends) do
+        local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
+        local friendGuildName = connInfo and connInfo.guildName or friend.guildName
+
+        -- Skip if friend is in the same guild as message origin (they already got it)
+        if friendGuildName and friendGuildName ~= originGuild then
+            -- Only send to confirmed bridge users or friends in allowed guilds
+            if connInfo or (friend.guildName and self.allowedGuilds[friend.guildName]) then
+                self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+            end
+        end
+    end
+
+    -- Also relay to whisper alts in different guilds (must be in allowed guild)
+    local now = GetTime()
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if now - info.lastSeen < 300 then
+            -- Skip if alt is in the same guild as message origin
+            -- Also verify alt is in an allowed guild
+            if info.guildName and info.guildName ~= originGuild and self.allowedGuilds[info.guildName] then
+                self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
+            end
+        end
     end
 end
 
@@ -764,9 +818,9 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
     self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, displayInTargetTab)
 
     -- Re-relay to other friends and alts (mesh network) - only for guild chat messages ("G")
+    -- OPTIMIZATION: Only relay to friends in DIFFERENT guilds than the message origin
     if GuildBridgeDB.bridgeEnabled and sourcePart == "G" then
-        self:SendBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
-        self:SendWhisperBridgePayload(originPart, originRealmPart, messagePart, "R", targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, sender)
+        self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
 end
 

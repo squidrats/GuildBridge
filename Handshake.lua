@@ -31,23 +31,26 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
     local payload = "[GBHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
 
     if targetGameAccountID then
-        -- Send to specific friend (PONG response)
+        -- Send to specific friend (PONG response) - immediate, not queued
         pcall(BNSendGameData, targetGameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
     else
-        -- Broadcast to all online friends (HELLO)
+        -- Broadcast handshakes to all online WoW friends
+        -- Handshakes are small and infrequent, so we send to everyone
+        -- The receiver will only respond if THEY are in an allowed guild
+        -- This solves the chicken-and-egg problem of needing guild info before connecting
         local friends = GB:FindOnlineWoWFriends()
         for _, friend in ipairs(friends) do
-            pcall(BNSendGameData, friend.gameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
+            GB:QueueBNetMessage(friend.gameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
         end
     end
 end
 
--- Send leave notification to all friends (when leaving guild)
+-- Send leave notification to confirmed bridge users (when leaving guild)
 function GB:SendLeaveNotification()
-    local friends = self:FindOnlineWoWFriends()
     local payload = "[GBHS]LEAVE"
-    for _, friend in ipairs(friends) do
-        pcall(BNSendGameData, friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+    -- Only need to notify confirmed bridge users - they're the only ones tracking us
+    for gameAccountID, _ in pairs(self.connectedBridgeUsers) do
+        self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
     end
 end
 
@@ -212,12 +215,12 @@ local function doSendWhisperHandshake(handshakeType, targetName)
     local payload = "[GBWHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
 
     if targetName then
-        -- Send to specific alt
+        -- Send to specific alt (PONG response) - immediate, not queued
         C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, payload, "WHISPER", targetName)
     else
-        -- Broadcast to all registered alts
+        -- Broadcast to all registered alts - use queue to throttle
         for altName, _ in pairs(GB.registeredAlts or {}) do
-            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+            GB:QueueWhisperMessage(GB.BRIDGE_ADDON_PREFIX, payload, altName)
         end
     end
 end
@@ -314,7 +317,7 @@ end
 function GB:SendWhisperLeaveNotification()
     local payload = "[GBWHS]LEAVE"
     for altName, _ in pairs(self.registeredAlts or {}) do
-        C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, payload, "WHISPER", altName)
+        self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
     end
 end
 

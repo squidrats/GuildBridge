@@ -11,6 +11,9 @@ GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
 GB.BRIDGE_ADDON_PREFIX = "GuildBridge"
 GB.MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 GB.HANDSHAKE_THROTTLE = 10    -- seconds
+GB.SEND_THROTTLE_DELAY = 0.15  -- seconds between outgoing messages (prevents disconnect)
+GB.FRIEND_INFO_DEBOUNCE = 5   -- seconds to debounce BN_FRIEND_INFO_CHANGED events
+GB.lastFriendInfoChange = 0   -- timestamp of last processed friend info change
 
 -- Shared state
 GB.currentFilter = nil        -- nil = All, or guild-realm key
@@ -25,6 +28,8 @@ GB.lastGuildActivity = {}     -- filterKey -> last message timestamp
 GB.lastHandshakeTime = 0      -- Throttle handshake sending
 GB.lastWhisperHandshakeTime = 0 -- Throttle whisper handshake sending
 GB.guildChatFrames = {}       -- Track which chat frames have guild chat enabled
+GB.outgoingQueue = {}         -- Queue of outgoing messages { type, target, prefix, payload }
+GB.isProcessingQueue = false  -- Flag to track if queue processor is running
 
 -- UI references (populated by UI module)
 GB.mainFrame = nil
@@ -173,4 +178,97 @@ function GB:GetGuildHomeRealm()
 
     -- GetGuildInfo not ready yet, use player's realm as fallback
     return GetRealmName()
+end
+
+-- Queue a BNet message for throttled sending
+function GB:QueueBNetMessage(gameAccountID, prefix, payload)
+    table.insert(self.outgoingQueue, {
+        type = "bnet",
+        target = gameAccountID,
+        prefix = prefix,
+        payload = payload,
+    })
+    self:ProcessQueue()
+end
+
+-- Queue a whisper addon message for throttled sending
+function GB:QueueWhisperMessage(prefix, payload, targetName)
+    table.insert(self.outgoingQueue, {
+        type = "whisper",
+        target = targetName,
+        prefix = prefix,
+        payload = payload,
+    })
+    self:ProcessQueue()
+end
+
+-- Process the outgoing message queue with throttling
+function GB:ProcessQueue()
+    if self.isProcessingQueue or #self.outgoingQueue == 0 then
+        return
+    end
+
+    self.isProcessingQueue = true
+
+    local function processNext()
+        if #GB.outgoingQueue == 0 then
+            GB.isProcessingQueue = false
+            return
+        end
+
+        local msg = table.remove(GB.outgoingQueue, 1)
+        if msg.type == "bnet" then
+            pcall(BNSendGameData, msg.target, msg.prefix, msg.payload)
+        elseif msg.type == "whisper" then
+            C_ChatInfo.SendAddonMessage(msg.prefix, msg.payload, "WHISPER", msg.target)
+        end
+
+        -- Schedule next message with delay
+        if #GB.outgoingQueue > 0 then
+            C_Timer.After(GB.SEND_THROTTLE_DELAY, processNext)
+        else
+            GB.isProcessingQueue = false
+        end
+    end
+
+    processNext()
+end
+
+-- Debug command to show diagnostic info
+SLASH_GBDEBUG1 = "/gbdebug"
+SlashCmdList["GBDEBUG"] = function()
+    print("=== GuildBridge Debug ===")
+
+    -- My guild info
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    print("My guild: " .. (myGuildName or "nil") .. " (clubId: " .. tostring(myGuildClubId) .. ")")
+    print("In allowedGuilds: " .. tostring(myGuildName and GB.allowedGuilds[myGuildName] or false))
+
+    -- Online friends
+    local friends = GB:FindOnlineWoWFriends()
+    print("Online WoW friends: " .. #friends)
+    for i, friend in ipairs(friends) do
+        if i <= 5 then -- Only show first 5
+            print("  " .. (friend.characterName or "?") .. "-" .. (friend.realmName or "?") .. " | guildName: " .. tostring(friend.guildName))
+        end
+    end
+    if #friends > 5 then
+        print("  ... and " .. (#friends - 5) .. " more")
+    end
+
+    -- Connected bridge users
+    local connCount = 0
+    for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+        connCount = connCount + 1
+        if connCount <= 5 then
+            print("  Connected: " .. (info.characterName or "?") .. " in <" .. (info.guildName or "?") .. ">")
+        end
+    end
+    print("Connected bridge users: " .. connCount)
+
+    -- Queue status
+    print("Queue size: " .. #GB.outgoingQueue .. " | Processing: " .. tostring(GB.isProcessingQueue))
+
+    print("=========================")
 end
