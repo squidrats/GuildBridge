@@ -413,6 +413,11 @@ function GB:RefreshRoster()
 
     -- Update content height for scrolling
     self.rosterContent:SetHeight(math.max(1, yOffset))
+
+    -- Update scrollbar to reflect new content size
+    if self.updateRosterScrollBar then
+        self.updateRosterScrollBar()
+    end
 end
 
 -- Show roster context menu for a member using WoW's native player dropdown
@@ -1690,23 +1695,105 @@ function GB:CreateBridgeUI()
     rosterHeader:SetTextColor(unpack(COLORS.guildGreen))
     self.rosterHeader = rosterHeader
 
-    -- Roster scroll frame (for member list)
-    local rosterScrollFrame = CreateFrame("ScrollFrame", nil, rosterPanel, "UIPanelScrollFrameTemplate")
+    -- Roster scroll frame (for member list) - use basic ScrollFrame, not template
+    local rosterScrollFrame = CreateFrame("ScrollFrame", nil, rosterPanel)
     rosterScrollFrame:SetPoint("TOPLEFT", 4, -22)
-    rosterScrollFrame:SetPoint("BOTTOMRIGHT", -22, 4)
-
-    -- Hide the default scroll bar styling (we'll style it)
-    local rosterScrollBar = rosterScrollFrame.ScrollBar or _G[rosterScrollFrame:GetName().."ScrollBar"]
-    if rosterScrollBar then
-        rosterScrollBar:SetWidth(10)
-    end
+    rosterScrollFrame:SetPoint("BOTTOMRIGHT", -14, 4)
 
     -- Roster content frame (holds member entries)
     local rosterContent = CreateFrame("Frame", nil, rosterScrollFrame)
-    rosterContent:SetSize(ROSTER_WIDTH - 26, 1)  -- Height will grow
+    rosterContent:SetSize(ROSTER_WIDTH - 18, 1)  -- Height will grow
     rosterScrollFrame:SetScrollChild(rosterContent)
     self.rosterContent = rosterContent
     self.rosterScrollFrame = rosterScrollFrame
+
+    -- Custom scrollbar track (background)
+    local rosterScrollTrack = CreateFrame("Frame", nil, rosterPanel, "BackdropTemplate")
+    rosterScrollTrack:SetPoint("TOPRIGHT", -4, -22)
+    rosterScrollTrack:SetPoint("BOTTOMRIGHT", -4, 4)
+    rosterScrollTrack:SetWidth(8)
+    rosterScrollTrack:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+    })
+    rosterScrollTrack:SetBackdropColor(0.1, 0.1, 0.1, 0.5)
+
+    -- Custom scrollbar slider
+    local rosterScrollBar = CreateFrame("Slider", nil, rosterScrollTrack)
+    rosterScrollBar:SetPoint("TOPLEFT", 0, 0)
+    rosterScrollBar:SetPoint("BOTTOMRIGHT", 0, 0)
+    rosterScrollBar:SetOrientation("VERTICAL")
+    rosterScrollBar:SetMinMaxValues(0, 1)
+    rosterScrollBar:SetValue(0)
+    rosterScrollBar:SetObeyStepOnDrag(true)
+    rosterScrollBar:SetValueStep(1)
+
+    -- Scrollbar thumb texture (will be sized proportionally)
+    local rosterThumbTexture = rosterScrollBar:CreateTexture(nil, "OVERLAY")
+    rosterThumbTexture:SetColorTexture(COLORS.guildGreenMuted[1], COLORS.guildGreenMuted[2], COLORS.guildGreenMuted[3], 0.7)
+    rosterThumbTexture:SetSize(8, 30)  -- Default size, will be updated
+    rosterScrollBar:SetThumbTexture(rosterThumbTexture)
+
+    -- Track if we're programmatically updating (avoid feedback loop)
+    local updatingRosterScrollBar = false
+
+    -- Update roster scrollbar to reflect content/viewport ratio
+    local function updateRosterScrollBar()
+        local contentHeight = rosterContent:GetHeight()
+        local viewportHeight = rosterScrollFrame:GetHeight()
+
+        if contentHeight <= viewportHeight or contentHeight <= 0 then
+            -- All content fits, hide scrollbar
+            rosterScrollTrack:Hide()
+            rosterScrollFrame:SetVerticalScroll(0)
+            return
+        end
+
+        rosterScrollTrack:Show()
+
+        -- Calculate proportional thumb size
+        local trackHeight = rosterScrollTrack:GetHeight()
+        local thumbRatio = viewportHeight / contentHeight
+        local thumbHeight = math.max(20, math.min(trackHeight, trackHeight * thumbRatio))
+        rosterThumbTexture:SetHeight(thumbHeight)
+
+        -- Calculate max scroll value
+        local maxScroll = contentHeight - viewportHeight
+
+        updatingRosterScrollBar = true
+        rosterScrollBar:SetMinMaxValues(0, maxScroll)
+        rosterScrollBar:SetValue(rosterScrollFrame:GetVerticalScroll())
+        updatingRosterScrollBar = false
+    end
+    self.updateRosterScrollBar = updateRosterScrollBar
+
+    -- When scrollbar is dragged, update scroll position
+    rosterScrollBar:SetScript("OnValueChanged", function(bar, value)
+        if updatingRosterScrollBar then return end
+        rosterScrollFrame:SetVerticalScroll(value)
+    end)
+
+    -- Mouse wheel scrolling on roster panel
+    rosterPanel:EnableMouseWheel(true)
+    rosterPanel:SetScript("OnMouseWheel", function(frame, delta)
+        local contentHeight = rosterContent:GetHeight()
+        local viewportHeight = rosterScrollFrame:GetHeight()
+        if contentHeight <= viewportHeight then return end
+
+        local maxScroll = contentHeight - viewportHeight
+        local scrollStep = 16 * 2  -- 2 entries per scroll
+        local currentScroll = rosterScrollFrame:GetVerticalScroll()
+        local newScroll = currentScroll - (delta * scrollStep)
+
+        newScroll = math.max(0, math.min(maxScroll, newScroll))
+        rosterScrollFrame:SetVerticalScroll(newScroll)
+        updateRosterScrollBar()
+    end)
+
+    -- Also enable wheel scrolling on scroll frame itself
+    rosterScrollFrame:EnableMouseWheel(true)
+    rosterScrollFrame:SetScript("OnMouseWheel", function(frame, delta)
+        rosterPanel:GetScript("OnMouseWheel")(rosterPanel, delta)
+    end)
 
     -- Store roster entry frames for reuse
     self.rosterEntries = {}
