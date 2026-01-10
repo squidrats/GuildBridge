@@ -710,6 +710,15 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
     if MNetDB.bridgeEnabled and sourcePart == "G" then
         self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
+
+    -- Relay cross-guild messages to guildmates via guild addon channel
+    -- This allows guildmates without BNet connections to see the message
+    -- Only relay if the message is from a DIFFERENT guild than ours
+    local myGuildName = GetGuildInfo("player")
+    if MNetDB.bridgeEnabled and guildPart and guildPart ~= myGuildName then
+        -- Relay the payload (strip the [GB] prefix, guild relay will add [GBGR])
+        self:RelayToGuildmates(payload)
+    end
 end
 
 -- Relay message only to friends in DIFFERENT guilds than the message origin
@@ -871,6 +880,12 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
     if MNetDB.bridgeEnabled and sourcePart == "G" then
         self:RelayToOtherGuilds(originPart, originRealmPart, messagePart, targetPart, messageIdPart, guildPart, guildRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart)
     end
+
+    -- Relay cross-guild messages to guildmates via guild addon channel
+    local myGuildName = GetGuildInfo("player")
+    if MNetDB.bridgeEnabled and guildPart and guildPart ~= myGuildName then
+        self:RelayToGuildmates(payload)
+    end
 end
 
 -- Refresh message display
@@ -964,4 +979,182 @@ function GB:RefreshMessages()
     if self.updateScrollBar then
         self.updateScrollBar()
     end
+end
+
+-- ============================================================================
+-- INTRA-GUILD RELAY
+-- Relay messages from other guilds to guildmates via the GUILD addon channel
+-- This allows guildmates without direct BNet connections to see cross-guild chat
+-- ============================================================================
+
+-- Check if we've already relayed this message recently (prevents duplicate relays)
+function GB:IsRecentGuildRelay(hash)
+    local now = GetTime()
+    -- Clean up old entries (older than dedupe window)
+    for h, timestamp in pairs(self.recentGuildRelays) do
+        if now - timestamp > self.MESSAGE_DEDUPE_WINDOW then
+            self.recentGuildRelays[h] = nil
+        end
+    end
+
+    if self.recentGuildRelays[hash] then
+        return true
+    end
+    self.recentGuildRelays[hash] = now
+    return false
+end
+
+-- Relay a cross-guild message to guildmates
+-- Called when we receive a message from another guild via BNet/whisper
+function GB:RelayToGuildmates(payload)
+    if not IsInGuild() then return end
+
+    -- Don't relay if bridge is disabled
+    if not MNetDB.bridgeEnabled then return end
+
+    -- Check if we've already queued/sent this relay recently
+    -- This prevents multiple guildmates with BNet connections from all relaying the same message
+    local hash = self:MakeMessageHash("relay", payload, "", "")
+    if self:IsRecentGuildRelay(hash) then
+        return
+    end
+
+    -- Queue the message for throttled sending
+    table.insert(self.guildRelayQueue, payload)
+    self:ProcessGuildRelayQueue()
+end
+
+-- Process the guild relay queue with throttling
+function GB:ProcessGuildRelayQueue()
+    if self.isProcessingGuildRelay or #self.guildRelayQueue == 0 then
+        return
+    end
+
+    self.isProcessingGuildRelay = true
+
+    local function processNext()
+        if #GB.guildRelayQueue == 0 then
+            GB.isProcessingGuildRelay = false
+            return
+        end
+
+        local payload = table.remove(GB.guildRelayQueue, 1)
+
+        -- Check if this is a data relay or chat relay
+        if payload:sub(1, 6) == "_DATA_" then
+            -- Data relay (roster/party) - use [GBGD] prefix
+            local dataPayload = payload:sub(7)
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
+        else
+            -- Chat relay - use [GBGR] prefix
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGR]" .. payload, "GUILD")
+        end
+
+        -- Schedule next message with delay
+        if #GB.guildRelayQueue > 0 then
+            C_Timer.After(GB.GUILD_RELAY_THROTTLE, processNext)
+        else
+            GB.isProcessingGuildRelay = false
+        end
+    end
+
+    processNext()
+end
+
+-- Handle incoming guild relay message (from a guildmate who has BNet connection)
+function GB:HandleGuildRelayMessage(payload, sender)
+    -- Don't process our own relays
+    local myName = UnitName("player")
+    -- sender format is "Name" or "Name-Realm"
+    local senderName = sender:match("^([^%-]+)") or sender
+    if senderName == myName then return end
+
+    -- Parse the relayed payload (same format as BNet messages)
+    local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart
+
+    -- New format with guildClubId
+    guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart =
+        payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+
+    -- Fallback to format without guildClubId
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        guildClubIdPart = nil
+    end
+
+    -- Fallback to format without classFile
+    if not messagePart then
+        guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, messagePart =
+            payload:match("([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|([^|]*)|(.+)")
+        classFilePart = nil
+        guildClubIdPart = nil
+    end
+
+    if not messagePart or not originPart then
+        return
+    end
+
+    -- Clean up empty strings
+    if guildPart == "" then guildPart = nil end
+    if guildRealmPart == "" then guildRealmPart = nil end
+    if originRealmPart == "" then originRealmPart = nil end
+    if guildHomeRealmPart == "" then guildHomeRealmPart = nil end
+    if classFilePart == "" then classFilePart = nil end
+    if guildClubIdPart == "" then guildClubIdPart = nil end
+
+    -- Fallback for home realm
+    if not guildHomeRealmPart then
+        guildHomeRealmPart = guildRealmPart
+    end
+
+    -- Only accept from allowed guilds
+    if guildPart and not self.allowedGuilds[guildPart] then
+        return
+    end
+
+    -- Check for duplicate (uses same deduplication as direct messages)
+    local hash = self:MakeMessageHash(guildPart or "", originPart, originRealmPart or "", messagePart)
+    if self:IsDuplicateMessage(hash) then
+        return
+    end
+
+    -- Display the message
+    self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, nil)
+end
+
+-- Handle incoming guild relay for roster data
+function GB:HandleGuildRelayRoster(payload, sender)
+    local myName = UnitName("player")
+    local senderName = sender:match("^([^%-]+)") or sender
+    if senderName == myName then return end
+
+    -- Determine message type from first 6 chars
+    local msgType = payload:sub(1, 6)
+    local msgData = payload:sub(7)
+
+    if msgType == "[GBRF]" and self.HandleRosterFullMessage then
+        self:HandleRosterFullMessage(msgData, sender, "guild")
+    elseif msgType == "[GBRD]" and self.HandleRosterDeltaMessage then
+        self:HandleRosterDeltaMessage(msgData, sender, "guild")
+    elseif msgType == "[GBPY]" and self.HandlePartyMessage then
+        self:HandlePartyMessage(msgData, sender, "guild")
+    end
+end
+
+-- Relay roster/party data to guildmates (throttled)
+function GB:RelayDataToGuildmates(payload)
+    if not IsInGuild() then return end
+    if not MNetDB.bridgeEnabled then return end
+
+    -- Check if we've already queued/sent this data relay recently
+    local hash = self:MakeMessageHash("data_relay", payload, "", "")
+    if self:IsRecentGuildRelay(hash) then
+        return
+    end
+
+    -- Queue the data message for throttled sending (same queue as chat relay)
+    -- Use _DATA_ prefix internally to distinguish from chat relay
+    table.insert(self.guildRelayQueue, "_DATA_" .. payload)
+    self:ProcessGuildRelayQueue()
 end

@@ -47,6 +47,13 @@ GB.remotePartyMembers = {}    -- "Name-Realm" -> { partyLeader = "Name-Realm" } 
 GB.lastPartySyncBroadcast = 0 -- timestamp of last party sync broadcast
 GB.PARTY_SYNC_THROTTLE = 1    -- seconds between party broadcasts
 
+-- Intra-guild relay state (relay cross-guild messages to guildmates via GUILD channel)
+GB.GUILD_RELAY_THROTTLE = 0.15 -- seconds between guild relay messages (slightly higher than BNet to be safe)
+GB.lastGuildRelayTime = 0     -- timestamp of last guild relay
+GB.guildRelayQueue = {}       -- Queue of messages to relay to guild
+GB.isProcessingGuildRelay = false -- Flag to track if guild relay queue processor is running
+GB.recentGuildRelays = {}     -- Hash -> timestamp for deduplication of relays (prevents multiple people relaying same msg)
+
 -- UI references (populated by UI module)
 GB.mainFrame = nil
 GB.scrollFrame = nil

@@ -215,10 +215,25 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         GB:HandleBNAddonMessage(prefix, message, senderID)
 
     elseif event == "CHAT_MSG_ADDON" then
-        -- Whisper-based addon messages for same-account alts
         local prefix, message, channel, sender = ...
-        if prefix == GB.BRIDGE_ADDON_PREFIX and channel == "WHISPER" then
-            GB:HandleWhisperAddonMessage(prefix, message, sender)
+        if prefix == GB.BRIDGE_ADDON_PREFIX then
+            if channel == "WHISPER" then
+                -- Whisper-based addon messages for same-account alts
+                GB:HandleWhisperAddonMessage(prefix, message, sender)
+            elseif channel == "GUILD" then
+                -- Intra-guild relay messages from guildmates
+                if message:sub(1, 6) == "[GBGR]" then
+                    -- Guild relay of cross-guild chat message
+                    if GB.HandleGuildRelayMessage then
+                        GB:HandleGuildRelayMessage(message:sub(7), sender)
+                    end
+                elseif message:sub(1, 6) == "[GBGD]" then
+                    -- Guild relay of roster/party data
+                    if GB.HandleGuildRelayRoster then
+                        GB:HandleGuildRelayRoster(message:sub(7), sender)
+                    end
+                end
+            end
         end
 
     elseif event == "PLAYER_LOGOUT" then

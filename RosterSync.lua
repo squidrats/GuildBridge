@@ -355,6 +355,14 @@ function GB:HandleRosterFullMessage(payload, senderID, senderType)
 
     if not version or not guildClubId then return end
 
+    -- Relay to guildmates if this is from another guild (via BNet or whisper, not guild relay)
+    if senderType ~= "guild" and self.RelayDataToGuildmates then
+        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            self:RelayDataToGuildmates("[GBRF]" .. payload)
+        end
+    end
+
     chunkIndex = tonumber(chunkIndex)
     totalChunks = tonumber(totalChunks)
     version = tonumber(version)
@@ -453,6 +461,14 @@ end
 function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     local version, guildClubId, changes = payload:match("([^|]+)|([^|]+)|(.+)")
     if not version or not guildClubId or not changes then return end
+
+    -- Relay to guildmates if this is from another guild (via BNet or whisper, not guild relay)
+    if senderType ~= "guild" and self.RelayDataToGuildmates then
+        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            self:RelayDataToGuildmates("[GBRD]" .. payload)
+        end
+    end
 
     version = tonumber(version)
 
@@ -650,7 +666,13 @@ function GB:ProcessPartyUpdate()
 end
 
 -- Build party status payload string
+-- Format: [GBPY]senderKey|member1,member2,member3
 function GB:BuildPartyStatusPayload()
+    -- Include our own name as the sender so relayed messages preserve attribution
+    local myName = UnitName("player")
+    local myRealm = GetRealmName()
+    local senderKey = myName .. "-" .. myRealm
+
     local memberList = ""
     for key, _ in pairs(self.partyMembers) do
         if memberList ~= "" then
@@ -658,7 +680,7 @@ function GB:BuildPartyStatusPayload()
         end
         memberList = memberList .. key
     end
-    return "[GBPY]" .. memberList
+    return "[GBPY]" .. senderKey .. "|" .. memberList
 end
 
 -- Send party status to a specific target (used on new connections, bypasses throttle)
@@ -698,28 +720,48 @@ function GB:BroadcastPartyStatus()
 end
 
 -- Handle incoming party status message
+-- Format: senderKey|member1,member2,member3 (new format)
+-- Or: member1,member2,member3 (old format, for backwards compatibility)
 function GB:HandlePartyMessage(payload, senderID, senderType)
-    -- Parse the member list
-    local members = {}
-    if payload and payload ~= "" then
-        for key in payload:gmatch("[^,]+") do
-            members[key] = true
-        end
+    -- Relay to guildmates if this is from another player (via BNet or whisper, not guild relay)
+    if senderType ~= "guild" and self.RelayDataToGuildmates then
+        self:RelayDataToGuildmates("[GBPY]" .. payload)
     end
 
-    -- Get sender's character name to track whose party this is
-    local senderKey = nil
-    if senderType == "bnet" then
-        local info = self.connectedBridgeUsers[senderID]
-        if info and info.characterName then
-            local realm = info.characterRealm or info.realmName or GetRealmName()
-            senderKey = info.characterName .. "-" .. realm
+    -- Parse the payload - check for new format with sender key
+    local senderKey, memberListStr
+    local pipePos = payload:find("|")
+    if pipePos then
+        -- New format: senderKey|members
+        senderKey = payload:sub(1, pipePos - 1)
+        memberListStr = payload:sub(pipePos + 1)
+    else
+        -- Old format: just members (backwards compatibility)
+        memberListStr = payload
+        -- Fall back to deriving sender from senderID
+        if senderType == "bnet" then
+            local info = self.connectedBridgeUsers[senderID]
+            if info and info.characterName then
+                local realm = info.characterRealm or info.realmName or GetRealmName()
+                senderKey = info.characterName .. "-" .. realm
+            end
+        elseif senderType == "whisper" or senderType == "guild" then
+            senderKey = senderID
+            if senderKey and not senderKey:find("-") then
+                senderKey = senderKey .. "-" .. GetRealmName()
+            end
         end
-    elseif senderType == "whisper" then
-        senderKey = senderID  -- Already in Name-Realm format
     end
 
     if not senderKey then return end
+
+    -- Parse the member list
+    local members = {}
+    if memberListStr and memberListStr ~= "" then
+        for key in memberListStr:gmatch("[^,]+") do
+            members[key] = true
+        end
+    end
 
     -- Clear old party data from this sender (collect keys first to avoid modifying while iterating)
     local keysToRemove = {}
