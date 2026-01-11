@@ -113,27 +113,34 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
 
         if not initialHandshakeDone then
             initialHandshakeDone = true
-            -- Send handshake after short delay to let everything load
-            C_Timer.After(3, function()
-                GB:ForceSendHandshake()
-                GB:ForceSendWhisperHandshake()
-            end)
-            -- Capture initial roster after a delay (guild roster needs time to load)
-            -- Request fresh roster data from server first
-            C_Timer.After(3, function()
+            -- STAGGER initial messages over 60 seconds to prevent login disconnect burst
+            -- Request roster data first (no network traffic, just local API call)
+            C_Timer.After(5, function()
                 if C_GuildInfo and C_GuildInfo.GuildRoster then
                     C_GuildInfo.GuildRoster()  -- Request fresh roster from server
                 elseif GuildRoster then
                     GuildRoster()  -- Fallback for older API
                 end
             end)
-            C_Timer.After(5, function()
+            -- Process roster (won't broadcast due to initial capture skip)
+            C_Timer.After(10, function()
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
-                -- Initial party sync after login
-                if GB.ProcessPartyUpdate then
-                    GB:ProcessPartyUpdate()
+            end)
+            -- BNet handshake much later - this queues messages to 50+ friends at 1 msg/sec
+            -- Wait 30 seconds to give any startup traffic time to clear
+            C_Timer.After(30, function()
+                GB:ForceSendHandshake()
+            end)
+            -- Whisper handshake even later
+            C_Timer.After(45, function()
+                GB:ForceSendWhisperHandshake()
+            end)
+            -- Initial party sync last (and only if enabled) - skipBroadcast=true to prevent login burst
+            C_Timer.After(60, function()
+                if GB.ProcessPartyUpdate and MNetDB.enablePartySync then
+                    GB:ProcessPartyUpdate(true)  -- true = skip initial broadcast
                 end
             end)
         end

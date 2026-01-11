@@ -162,7 +162,65 @@ function GB:SendFullRoster(targetGameAccountID, targetType)
     end
 end
 
--- Request full roster from a peer
+-- Queue a roster request (throttled to prevent burst)
+function GB:QueueRosterRequest(targetID, guildClubId, targetType)
+    if not guildClubId then return end
+
+    -- Check if we already have a request queued for this guild
+    for _, req in ipairs(self.rosterRequestQueue) do
+        if tostring(req.guildClubId) == tostring(guildClubId) then
+            return  -- Already queued
+        end
+    end
+
+    -- Add to queue
+    table.insert(self.rosterRequestQueue, {
+        targetID = targetID,
+        guildClubId = guildClubId,
+        targetType = targetType,
+        timestamp = GetTime(),
+    })
+
+    -- Start processing if not already running
+    self:ProcessRosterRequestQueue()
+end
+
+-- Process the roster request queue with throttling
+function GB:ProcessRosterRequestQueue()
+    if self.isProcessingRosterRequests or #self.rosterRequestQueue == 0 then
+        return
+    end
+
+    self.isProcessingRosterRequests = true
+
+    local function processNext()
+        if #GB.rosterRequestQueue == 0 then
+            GB.isProcessingRosterRequests = false
+            return
+        end
+
+        local req = table.remove(GB.rosterRequestQueue, 1)
+
+        -- Send the roster request
+        local payload = "[GBRR]" .. req.guildClubId
+        if req.targetType == "whisper" then
+            GB:QueueWhisperMessage(GB.BRIDGE_ADDON_PREFIX, payload, req.targetID)
+        else
+            GB:QueueBNetMessage(req.targetID, GB.BRIDGE_ADDON_PREFIX, payload)
+        end
+
+        -- Schedule next request with delay
+        if #GB.rosterRequestQueue > 0 then
+            C_Timer.After(GB.ROSTER_REQUEST_THROTTLE, processNext)
+        else
+            GB.isProcessingRosterRequests = false
+        end
+    end
+
+    processNext()
+end
+
+-- Request full roster from a peer (immediate, for manual use)
 function GB:RequestFullRoster(targetGameAccountID, guildClubId, targetType)
     if not guildClubId then return end
 
@@ -307,11 +365,10 @@ function GB:ProcessGuildRosterUpdate()
             end
         end
     else
-        -- First roster capture - everything is "added"
-        for name, info in pairs(currentOnline) do
-            deltas.added[name] = info
-        end
-        hasChanges = true
+        -- First roster capture - DON'T broadcast initial state to prevent login disconnect
+        -- Just silently initialize the roster without sending updates
+        -- Real changes will be detected and broadcast after this initial capture
+        hasChanges = false  -- Set to false to skip initial broadcast
     end
 
     -- Update local roster
@@ -322,7 +379,7 @@ function GB:ProcessGuildRosterUpdate()
         lastUpdate = GetTime(),
     }
 
-    -- Broadcast deltas if any changes
+    -- Broadcast deltas if any changes (but NOT on initial capture)
     if hasChanges and (next(deltas.removed) or next(deltas.added)) then
         self:BroadcastRosterDelta(deltas)
     end
@@ -356,7 +413,8 @@ function GB:HandleRosterFullMessage(payload, senderID, senderType)
     if not version or not guildClubId then return end
 
     -- Relay to guildmates if this is from another guild (via BNet or whisper, not guild relay)
-    if senderType ~= "guild" and self.RelayDataToGuildmates then
+    -- Only if roster relay to guild is enabled (disabled by default due to high traffic)
+    if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
             self:RelayDataToGuildmates("[GBRF]" .. payload)
@@ -463,7 +521,8 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     if not version or not guildClubId or not changes then return end
 
     -- Relay to guildmates if this is from another guild (via BNet or whisper, not guild relay)
-    if senderType ~= "guild" and self.RelayDataToGuildmates then
+    -- Only if roster relay to guild is enabled (disabled by default due to high traffic)
+    if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
             self:RelayDataToGuildmates("[GBRD]" .. payload)
@@ -536,17 +595,24 @@ function GB:ClearDisconnectedRosters()
     for filterKey, roster in pairs(self.guildRosters) do
         -- Skip our own guild's roster
         if filterKey ~= myFilterKey then
-            -- Remove if we don't have an active connection to this guild
+            -- Clear roster data if we don't have an active connection to this guild
             if not self:HasConnectedUserInGuild(filterKey) then
-                self.guildRosters[filterKey] = nil
+                -- Clear the roster members but keep the entry (so tabs stay visible with red indicator)
+                self.guildRosters[filterKey] = {
+                    members = {},
+                    version = 0,
+                    lastUpdate = GetTime(),
+                }
                 clearedAny = true
             end
         end
     end
 
-    -- Refresh UI if we cleared any rosters
-    if clearedAny and self.RefreshRoster then
-        self:RefreshRoster()
+    -- Refresh UI if we cleared any rosters (tabs will show red indicator now)
+    if clearedAny then
+        if self.RefreshRoster then
+            self:RefreshRoster()
+        end
     end
 end
 
@@ -580,17 +646,42 @@ end
 function GB:RequestRosterResync()
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
 
-    -- Request from BNet bridge users
+    -- Build set of guilds we're missing rosters for
+    local missingGuilds = {}
+
+    -- Request from BNet bridge users - but ONLY if we don't have their guild's roster
     for gameAccountID, info in pairs(self.connectedBridgeUsers) do
         if info.guildClubId and info.guildClubId ~= myGuildClubId then
-            self:RequestFullRoster(gameAccountID, info.guildClubId, "bnet")
+            local filterKey = self:MakeFilterKey(info.guildName, info.guildHomeRealm)
+            local roster = self.guildRosters[filterKey]
+
+            -- Only request if we don't have this guild's roster yet, or it's very stale
+            if not roster or not roster.members or (GetTime() - roster.lastUpdate > 600) then
+                -- Check if we've already requested this guild (to avoid duplicate requests)
+                if not missingGuilds[info.guildClubId] then
+                    missingGuilds[info.guildClubId] = true
+                    -- Use throttled queue for re-sync too
+                    self:QueueRosterRequest(gameAccountID, info.guildClubId, "bnet")
+                end
+            end
         end
     end
 
-    -- Request from whisper alts
+    -- Request from whisper alts - but ONLY if we don't have their guild's roster
     for altName, info in pairs(self.connectedWhisperAlts) do
         if info.guildClubId and info.guildClubId ~= myGuildClubId then
-            self:RequestFullRoster(altName, info.guildClubId, "whisper")
+            local filterKey = self:MakeFilterKey(info.guildName, info.guildHomeRealm)
+            local roster = self.guildRosters[filterKey]
+
+            -- Only request if we don't have this guild's roster yet, or it's very stale
+            if not roster or not roster.members or (GetTime() - roster.lastUpdate > 600) then
+                -- Check if we've already requested this guild (to avoid duplicate requests)
+                if not missingGuilds[info.guildClubId] then
+                    missingGuilds[info.guildClubId] = true
+                    -- Use throttled queue for re-sync too
+                    self:QueueRosterRequest(altName, info.guildClubId, "whisper")
+                end
+            end
         end
     end
 end
@@ -626,7 +717,13 @@ function GB:GetPartyMemberKeys()
 end
 
 -- Process party update event - detect changes and broadcast
-function GB:ProcessPartyUpdate()
+function GB:ProcessPartyUpdate(skipBroadcast)
+    -- Skip if party sync is disabled
+    if not MNetDB.enablePartySync then
+        self.partyMembers = {}
+        return
+    end
+
     local currentMembers = self:GetPartyMemberKeys()
     local previousMembers = self.partyMembers or {}
 
@@ -654,8 +751,8 @@ function GB:ProcessPartyUpdate()
     -- Update local state
     self.partyMembers = currentMembers
 
-    -- Broadcast if changes detected
-    if hasChanges then
+    -- Broadcast if changes detected (unless skipBroadcast is true for initial login)
+    if hasChanges and not skipBroadcast then
         self:BroadcastPartyStatus()
     end
 
@@ -696,6 +793,11 @@ end
 
 -- Broadcast current party status to all connected bridge users
 function GB:BroadcastPartyStatus()
+    -- Skip if party sync is disabled
+    if not MNetDB.enablePartySync then
+        return
+    end
+
     local now = GetTime()
 
     -- Throttle broadcasts

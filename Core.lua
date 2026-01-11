@@ -11,7 +11,7 @@ GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
 GB.BRIDGE_ADDON_PREFIX = "MNet"
 GB.MESSAGE_DEDUPE_WINDOW = 10  -- seconds
 GB.HANDSHAKE_THROTTLE = 10    -- seconds
-GB.SEND_THROTTLE_DELAY = 0.15  -- seconds between outgoing messages (prevents disconnect)
+GB.SEND_THROTTLE_DELAY = 1.0  -- seconds between outgoing messages (INCREASED to prevent disconnect)
 GB.FRIEND_INFO_DEBOUNCE = 5   -- seconds to debounce BN_FRIEND_INFO_CHANGED events
 GB.lastFriendInfoChange = 0   -- timestamp of last processed friend info change
 
@@ -36,23 +36,42 @@ GB.guildRosters = {}          -- filterKey -> { members = {}, version = 0, lastU
 GB.pendingRosterChunks = {}   -- guildClubId -> { chunks = {}, total = n, version = v, startTime = t }
 GB.pendingRosterDeltas = { added = {}, removed = {} }  -- Accumulate deltas during throttle
 GB.rosterDeltaTimerScheduled = false  -- Prevent multiple timers
-GB.ROSTER_SYNC_THROTTLE = 2   -- seconds between roster broadcasts
+GB.ROSTER_SYNC_THROTTLE = 10  -- seconds between roster broadcasts (INCREASED to reduce traffic)
 GB.ROSTER_CHUNK_SIZE = 200    -- bytes per chunk payload
 GB.lastRosterBroadcast = 0    -- timestamp of last roster broadcast
 GB.rosterUpdatePending = false -- debounce flag for roster updates
+GB.rosterRequestQueue = {}    -- Queue of pending roster requests { targetID, guildClubId, targetType, timestamp }
+GB.isProcessingRosterRequests = false  -- Flag to track if roster request queue is processing
+GB.ROSTER_REQUEST_THROTTLE = 5.0  -- seconds between roster requests (spreads out initial handshake burst)
 
 -- Party sync state
 GB.partyMembers = {}          -- "Name-Realm" -> true (players in my current party)
 GB.remotePartyMembers = {}    -- "Name-Realm" -> { partyLeader = "Name-Realm" } (party info from other players)
 GB.lastPartySyncBroadcast = 0 -- timestamp of last party sync broadcast
-GB.PARTY_SYNC_THROTTLE = 1    -- seconds between party broadcasts
+GB.PARTY_SYNC_THROTTLE = 5    -- seconds between party broadcasts (INCREASED to reduce traffic)
 
 -- Intra-guild relay state (relay cross-guild messages to guildmates via GUILD channel)
-GB.GUILD_RELAY_THROTTLE = 0.15 -- seconds between guild relay messages (slightly higher than BNet to be safe)
+GB.GUILD_RELAY_THROTTLE = 2.0 -- seconds between guild relay messages (GUILD channel has VERY strict rate limits)
 GB.lastGuildRelayTime = 0     -- timestamp of last guild relay
 GB.guildRelayQueue = {}       -- Queue of messages to relay to guild
 GB.isProcessingGuildRelay = false -- Flag to track if guild relay queue processor is running
 GB.recentGuildRelays = {}     -- Hash -> timestamp for deduplication of relays (prevents multiple people relaying same msg)
+
+-- Traffic debugging
+GB.trafficStats = {
+    bnet = 0,           -- BNet messages sent
+    whisper = 0,        -- Whisper messages sent
+    guild = 0,          -- Guild channel messages sent
+    lastReset = GetTime(),  -- Last time stats were reset (initialize to current time)
+    -- Message type breakdown
+    handshakes = 0,     -- [GBHS] handshake messages
+    rosterFull = 0,     -- [GBRF] full roster chunks
+    rosterDelta = 0,    -- [GBRD] roster delta updates
+    rosterRequest = 0,  -- [GBRR] roster requests
+    party = 0,          -- [GBPY] party status updates
+    chat = 0,           -- [GB] regular chat messages
+}
+GB.enableTrafficDebug = false  -- Toggle with /mn traffic
 
 -- UI references (populated by UI module)
 GB.mainFrame = nil
@@ -130,6 +149,15 @@ function GB:EnsureSavedVariables()
     end
     if MNetDB.filterNativeChat == nil then
         MNetDB.filterNativeChat = false
+    end
+    if MNetDB.enableGuildRelay == nil then
+        MNetDB.enableGuildRelay = true  -- Default to ON
+    end
+    if MNetDB.relayRosterToGuild == nil then
+        MNetDB.relayRosterToGuild = true  -- Default ON
+    end
+    if MNetDB.enablePartySync == nil then
+        MNetDB.enablePartySync = true  -- Default ON, but can disable if in large raids
     end
     if MNetDB.knownGuilds == nil then
         MNetDB.knownGuilds = {}
@@ -245,10 +273,43 @@ function GB:ProcessQueue()
         end
 
         local msg = table.remove(GB.outgoingQueue, 1)
+
+        -- Track message type for debugging
+        local msgType = "unknown"
+        if msg.payload then
+            if msg.payload:sub(1, 6) == "[GBHS]" then
+                msgType = "handshake"
+                GB.trafficStats.handshakes = GB.trafficStats.handshakes + 1
+            elseif msg.payload:sub(1, 6) == "[GBRF]" then
+                msgType = "roster-full"
+                GB.trafficStats.rosterFull = GB.trafficStats.rosterFull + 1
+            elseif msg.payload:sub(1, 6) == "[GBRD]" then
+                msgType = "roster-delta"
+                GB.trafficStats.rosterDelta = GB.trafficStats.rosterDelta + 1
+            elseif msg.payload:sub(1, 6) == "[GBRR]" then
+                msgType = "roster-req"
+                GB.trafficStats.rosterRequest = GB.trafficStats.rosterRequest + 1
+            elseif msg.payload:sub(1, 6) == "[GBPY]" then
+                msgType = "party"
+                GB.trafficStats.party = GB.trafficStats.party + 1
+            elseif msg.payload:sub(1, 4) == "[GB]" then
+                msgType = "chat"
+                GB.trafficStats.chat = GB.trafficStats.chat + 1
+            end
+        end
+
         if msg.type == "bnet" then
             pcall(BNSendGameData, msg.target, msg.prefix, msg.payload)
+            GB.trafficStats.bnet = GB.trafficStats.bnet + 1
+            if GB.enableTrafficDebug then
+                print(string.format("|cff00ff00[Traffic]|r BNet %s (queue: %d)", msgType, #GB.outgoingQueue))
+            end
         elseif msg.type == "whisper" then
             C_ChatInfo.SendAddonMessage(msg.prefix, msg.payload, "WHISPER", msg.target)
+            GB.trafficStats.whisper = GB.trafficStats.whisper + 1
+            if GB.enableTrafficDebug then
+                print(string.format("|cff00ff00[Traffic]|r Whisper %s (queue: %d)", msgType, #GB.outgoingQueue))
+            end
         end
 
         -- Schedule next message with delay

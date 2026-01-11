@@ -31,8 +31,8 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
     local payload = "[GBHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
 
     if targetGameAccountID then
-        -- Send to specific friend (PONG response) - immediate, not queued
-        pcall(BNSendGameData, targetGameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
+        -- Send to specific friend (PONG response) - NOW QUEUED to prevent burst
+        GB:QueueBNetMessage(targetGameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
     else
         -- Broadcast handshakes to all online WoW friends
         -- Handshakes are small and infrequent, so we send to everyone
@@ -45,9 +45,39 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
     end
 end
 
--- Send leave notification to confirmed bridge users (when leaving guild)
+-- Get guild home realm from club ID (helper for LEAVE processing)
+function GB:GetGuildHomeRealmFromClubId(guildClubId)
+    -- Check known guilds for matching club ID
+    for filterKey, info in pairs(self.knownGuilds) do
+        if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildHomeRealm
+        end
+    end
+    -- Check connected users
+    for _, info in pairs(self.connectedBridgeUsers) do
+        if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildHomeRealm
+        end
+    end
+    for _, info in pairs(self.connectedWhisperAlts) do
+        if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildHomeRealm
+        end
+    end
+    return nil
+end
+
+-- Send leave notification to confirmed bridge users (when leaving guild or logging out)
 function GB:SendLeaveNotification()
-    local payload = "[GBHS]LEAVE"
+    -- Include character name and guild info so receivers can update their rosters
+    local myName = UnitName("player")
+    local myRealm = GetRealmName()
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+
+    -- Format: [GBHS]LEAVE|charName|charRealm|guildName|guildClubId
+    local payload = "[GBHS]LEAVE|" .. myName .. "|" .. myRealm .. "|" .. (myGuildName or "") .. "|" .. (myGuildClubId or "")
+
     -- Only need to notify confirmed bridge users - they're the only ones tracking us
     for gameAccountID, _ in pairs(self.connectedBridgeUsers) do
         self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
@@ -94,10 +124,37 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
 
     local data = message:sub(7)
 
-    -- Handle LEAVE message (player left their guild)
-    if data == "LEAVE" then
+    -- Handle LEAVE message (player logged out or left their guild)
+    if data:sub(1, 5) == "LEAVE" then
+        -- Parse LEAVE data: LEAVE|charName|charRealm|guildName|guildClubId
+        local parts = {strsplit("|", data)}
+        local charName = parts[2]
+        local charRealm = parts[3]
+        local guildName = parts[4]
+        local guildClubId = parts[5]
+
+        -- Remove from connected users
         self.connectedBridgeUsers[senderGameAccountID] = nil
         self:UpdateConnectionIndicators()
+
+        -- If we have guild info, remove this character from their guild's roster
+        if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
+            local filterKey = self:MakeFilterKey(guildName, self:GetGuildHomeRealmFromClubId(guildClubId))
+            local roster = self.guildRosters[filterKey]
+            if roster and roster.members and roster.members[charName] then
+                -- Remove the character from the roster
+                roster.members[charName] = nil
+                roster.version = roster.version + 1
+                roster.lastUpdate = GetTime()
+                self.guildRosters[filterKey] = roster
+
+                -- Refresh UI to show updated roster
+                if self.RefreshRoster then
+                    self:RefreshRoster()
+                end
+            end
+        end
+
         -- Clear rosters for guilds that no longer have connections
         if self.ClearDisconnectedRosters then
             self:ClearDisconnectedRosters()
@@ -158,14 +215,21 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         self:SendHandshakeMessage("PONG", senderGameAccountID)
     end
 
-    -- Request their roster (only if we have the function and they have a clubId)
-    -- We do this after any HELLO or PONG to sync roster data
-    if guildClubId and self.RequestFullRoster then
-        self:RequestFullRoster(senderGameAccountID, guildClubId, "bnet")
+    -- Throttled roster request: Only request if we don't have this guild's roster yet
+    -- Uses QueueRosterRequest which throttles at 1 request per 5 seconds to prevent burst
+    if guildClubId and self.QueueRosterRequest then
+        local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
+        local roster = self.guildRosters[filterKey]
+
+        -- Only request if we don't have this guild's roster yet
+        if not roster or not roster.members then
+            -- Queue the request (throttled to prevent login burst)
+            self:QueueRosterRequest(senderGameAccountID, guildClubId, "bnet")
+        end
     end
 
-    -- Send our party status to the new connection (targeted, bypasses throttle)
-    if self.SendPartyStatusTo then
+    -- Send party status on PONG (new connections only) - this is fine since it's 1 message per friend
+    if handshakeType == "PONG" and self.SendPartyStatusTo and MNetDB.enablePartySync then
         self:SendPartyStatusTo(senderGameAccountID, "bnet")
     end
 
@@ -201,7 +265,8 @@ function GB:SendHandshakeToFriend(gameAccountID)
     local guildClubId = getGuildClubId()
 
     local payload = "[GBHS]HELLO|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
-    pcall(BNSendGameData, gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+    -- NOW QUEUED to prevent burst when multiple friends come online
+    self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
 end
 
 -- ============================================================================
@@ -230,8 +295,8 @@ local function doSendWhisperHandshake(handshakeType, targetName)
     local payload = "[GBWHS]" .. handshakeType .. "|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
 
     if targetName then
-        -- Send to specific alt (PONG response) - immediate, not queued
-        C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, payload, "WHISPER", targetName)
+        -- Send to specific alt (PONG response) - NOW QUEUED to prevent burst
+        GB:QueueWhisperMessage(GB.BRIDGE_ADDON_PREFIX, payload, targetName)
     else
         -- Broadcast to all registered alts - use queue to throttle
         for altName, _ in pairs(GB.registeredAlts or {}) do
@@ -273,10 +338,37 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
 
     local data = message:sub(8)
 
-    -- Handle LEAVE message
-    if data == "LEAVE" then
+    -- Handle LEAVE message (player logged out or left their guild)
+    if data:sub(1, 5) == "LEAVE" then
+        -- Parse LEAVE data: LEAVE|charName|charRealm|guildName|guildClubId
+        local parts = {strsplit("|", data)}
+        local charName = parts[2]
+        local charRealm = parts[3]
+        local guildName = parts[4]
+        local guildClubId = parts[5]
+
+        -- Remove from connected alts
         self.connectedWhisperAlts[senderName] = nil
         self:UpdateConnectionIndicators()
+
+        -- If we have guild info, remove this character from their guild's roster
+        if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
+            local filterKey = self:MakeFilterKey(guildName, self:GetGuildHomeRealmFromClubId(guildClubId))
+            local roster = self.guildRosters[filterKey]
+            if roster and roster.members and roster.members[charName] then
+                -- Remove the character from the roster
+                roster.members[charName] = nil
+                roster.version = roster.version + 1
+                roster.lastUpdate = GetTime()
+                self.guildRosters[filterKey] = roster
+
+                -- Refresh UI to show updated roster
+                if self.RefreshRoster then
+                    self:RefreshRoster()
+                end
+            end
+        end
+
         -- Clear rosters for guilds that no longer have connections
         if self.ClearDisconnectedRosters then
             self:ClearDisconnectedRosters()
@@ -329,13 +421,18 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         doSendWhisperHandshake("PONG", senderName)
     end
 
-    -- Request their roster (only if we have the function and they have a clubId)
-    if guildClubId and self.RequestFullRoster then
-        self:RequestFullRoster(senderName, guildClubId, "whisper")
+    -- Throttled roster request: Only request if we don't have this guild's roster yet
+    if guildClubId and self.QueueRosterRequest then
+        local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
+        local roster = self.guildRosters[filterKey]
+
+        if not roster or not roster.members then
+            self:QueueRosterRequest(senderName, guildClubId, "whisper")
+        end
     end
 
-    -- Send our party status to the new connection (targeted, bypasses throttle)
-    if self.SendPartyStatusTo then
+    -- Send party status on PONG (new connections only)
+    if handshakeType == "PONG" and self.SendPartyStatusTo and MNetDB.enablePartySync then
         self:SendPartyStatusTo(senderName, "whisper")
     end
 
@@ -344,7 +441,15 @@ end
 
 -- Send leave notification via whisper to registered alts
 function GB:SendWhisperLeaveNotification()
-    local payload = "[GBWHS]LEAVE"
+    -- Include character name and guild info so receivers can update their rosters
+    local myName = UnitName("player")
+    local myRealm = GetRealmName()
+    local myGuildName = GetGuildInfo("player")
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+
+    -- Format: [GBWHS]LEAVE|charName|charRealm|guildName|guildClubId
+    local payload = "[GBWHS]LEAVE|" .. myName .. "|" .. myRealm .. "|" .. (myGuildName or "") .. "|" .. (myGuildClubId or "")
+
     for altName, _ in pairs(self.registeredAlts or {}) do
         self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
     end

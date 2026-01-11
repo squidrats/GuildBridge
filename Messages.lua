@@ -1009,8 +1009,8 @@ end
 function GB:RelayToGuildmates(payload)
     if not IsInGuild() then return end
 
-    -- Don't relay if bridge is disabled
-    if not MNetDB.bridgeEnabled then return end
+    -- Don't relay if bridge is disabled OR guild relay is disabled
+    if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
 
     -- Check if we've already queued/sent this relay recently
     -- This prevents multiple guildmates with BNet connections from all relaying the same message
@@ -1041,13 +1041,21 @@ function GB:ProcessGuildRelayQueue()
         local payload = table.remove(GB.guildRelayQueue, 1)
 
         -- Check if this is a data relay or chat relay
+        local msgType
         if payload:sub(1, 6) == "_DATA_" then
             -- Data relay (roster/party) - use [GBGD] prefix
             local dataPayload = payload:sub(7)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
+            msgType = "DATA"
         else
             -- Chat relay - use [GBGR] prefix
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGR]" .. payload, "GUILD")
+            msgType = "CHAT"
+        end
+
+        GB.trafficStats.guild = GB.trafficStats.guild + 1
+        if GB.enableTrafficDebug then
+            print("|cffff8800[Traffic]|r Guild " .. msgType .. " relay (queue: " .. #GB.guildRelayQueue .. ", size: " .. #payload .. " bytes)")
         end
 
         -- Schedule next message with delay
@@ -1145,7 +1153,7 @@ end
 -- Relay roster/party data to guildmates (throttled)
 function GB:RelayDataToGuildmates(payload)
     if not IsInGuild() then return end
-    if not MNetDB.bridgeEnabled then return end
+    if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
 
     -- Check if we've already queued/sent this data relay recently
     local hash = self:MakeMessageHash("data_relay", payload, "", "")

@@ -1159,7 +1159,7 @@ local function createPageTabs()
         GB.pageTabContainer = CreateFrame("Frame", nil, GB.mainFrame, "BackdropTemplate")
     end
     local container = GB.pageTabContainer
-    container:SetSize(112, 24)  -- 55*2 + 2 padding
+    container:SetSize(168, 24)  -- 55*3 + 3 padding for 3 tabs
     container:SetPoint("TOPLEFT", GB.mainFrame, "TOPLEFT", 8, -28)
     container:SetBackdrop({
         bgFile = "Interface\\Buttons\\WHITE8x8",
@@ -1174,9 +1174,13 @@ local function createPageTabs()
     GB.pageTabs[1] = createPageTab(container, "Chat", 1, "chat", true, false)
     GB.pageTabs[1]:SetPoint("LEFT", container, "LEFT", 1, 0)
 
-    -- Create Status tab (right segment)
-    GB.pageTabs[2] = createPageTab(container, "Status", 2, "status", false, true)
+    -- Create Status tab (middle segment)
+    GB.pageTabs[2] = createPageTab(container, "Status", 2, "status", false, false)
     GB.pageTabs[2]:SetPoint("LEFT", GB.pageTabs[1], "RIGHT", 0, 0)
+
+    -- Create Debug tab (right segment)
+    GB.pageTabs[3] = createPageTab(container, "Debug", 3, "debug", false, true)
+    GB.pageTabs[3]:SetPoint("LEFT", GB.pageTabs[2], "RIGHT", 0, 0)
 
     -- Separator line between page tabs and guild tabs
     if not GB.tabSeparator then
@@ -1239,7 +1243,7 @@ updatePageVisibility = function()
             if numRows < 1 then numRows = 1 end
             scrollTopOffset = titleBarHeight + pageTabHeight + separatorHeight + (numRows * rowHeight) + 4
         else
-            -- Status page - just page tabs, no guild filter tabs
+            -- Status/Debug page - just page tabs, no guild filter tabs
             scrollTopOffset = titleBarHeight + pageTabHeight + 8
         end
         GB.scrollFrame:SetPoint("TOPLEFT", 10, -scrollTopOffset)
@@ -1250,6 +1254,37 @@ updatePageVisibility = function()
         -- Also adjust roster panel position
         if GB.rosterPanel then
             GB.rosterPanel:SetPoint("TOPRIGHT", -8, -scrollTopOffset)
+        end
+    end
+
+    -- Show/hide debug display and chat/roster elements
+    if GB.currentPage == "debug" then
+        -- Show debug, hide chat and roster
+        if GB.debugDisplay then
+            GB.debugDisplay:Show()
+        end
+        if GB.scrollFrame then
+            GB.scrollFrame:Hide()
+        end
+        if GB.rosterPanel then
+            GB.rosterPanel:Hide()
+        end
+        if GB.scrollBarTrack then
+            GB.scrollBarTrack:Hide()
+        end
+    else
+        -- Show chat and roster, hide debug
+        if GB.debugDisplay then
+            GB.debugDisplay:Hide()
+        end
+        if GB.scrollFrame then
+            GB.scrollFrame:Show()
+        end
+        if GB.rosterPanel then
+            GB.rosterPanel:Show()
+        end
+        if GB.scrollBarTrack then
+            GB.scrollBarTrack:Show()
         end
     end
 
@@ -1508,6 +1543,72 @@ function GB:CreateBridgeUI()
     end)
     self.muteCheckbox:SetScript("OnLeave", function()
         GameTooltip:Hide()
+    end)
+
+    -- Create debug display frame (hidden by default)
+    self.debugDisplay = CreateFrame("Frame", nil, self.mainFrame, "BackdropTemplate")
+    self.debugDisplay:SetPoint("TOPLEFT", 10, -68)
+    self.debugDisplay:SetPoint("BOTTOMRIGHT", -(ROSTER_WIDTH + 10), 40)
+    self.debugDisplay:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    self.debugDisplay:SetBackdropColor(unpack(COLORS.bgChat))
+    self.debugDisplay:SetBackdropBorderColor(unpack(COLORS.border))
+    self.debugDisplay:Hide()
+
+    -- Debug text area with scrollbar
+    local debugScrollFrame = CreateFrame("ScrollFrame", nil, self.debugDisplay)
+    debugScrollFrame:SetPoint("TOPLEFT", 8, -8)
+    debugScrollFrame:SetPoint("BOTTOMRIGHT", -24, 8)  -- Leave room for scrollbar
+
+    -- Create a container frame for the FontString
+    local debugTextContainer = CreateFrame("Frame", nil, debugScrollFrame)
+    debugTextContainer:SetSize(debugScrollFrame:GetWidth(), 1)  -- Height will adjust to text
+
+    local debugText = debugTextContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    debugText:SetJustifyH("LEFT")
+    debugText:SetJustifyV("TOP")
+    debugText:SetPoint("TOPLEFT", debugTextContainer, "TOPLEFT", 0, 0)
+    debugText:SetWidth(debugScrollFrame:GetWidth() - 16)
+    debugText:SetTextColor(unpack(COLORS.textNormal))
+
+    debugScrollFrame:SetScrollChild(debugTextContainer)
+
+    -- Add scrollbar to debug area
+    local debugScrollBar = CreateFrame("Slider", nil, debugScrollFrame, "UIPanelScrollBarTemplate")
+    debugScrollBar:SetPoint("TOPLEFT", debugScrollFrame, "TOPRIGHT", 4, -16)
+    debugScrollBar:SetPoint("BOTTOMLEFT", debugScrollFrame, "BOTTOMRIGHT", 4, 16)
+    debugScrollBar:SetMinMaxValues(0, 100)
+    debugScrollBar:SetValueStep(20)
+    debugScrollBar:SetWidth(16)
+    debugScrollBar:SetScript("OnValueChanged", function(self, value)
+        debugScrollFrame:SetVerticalScroll(value)
+    end)
+
+    -- Enable mouse wheel scrolling on debug frame
+    debugScrollFrame:EnableMouseWheel(true)
+    debugScrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local current = debugScrollBar:GetValue()
+        local minVal, maxVal = debugScrollBar:GetMinMaxValues()
+        if delta > 0 then
+            debugScrollBar:SetValue(math.max(minVal, current - 40))
+        else
+            debugScrollBar:SetValue(math.min(maxVal, current + 40))
+        end
+    end)
+
+    self.debugText = debugText
+    self.debugTextContainer = debugTextContainer
+    self.debugScrollFrame = debugScrollFrame
+    self.debugScrollBar = debugScrollBar
+
+    -- Update debug text every second
+    C_Timer.NewTicker(1, function()
+        if GB.currentPage == "debug" and GB.debugDisplay:IsShown() then
+            GB:UpdateDebugDisplay()
+        end
     end)
 
     -- Scroll frame container for messages - chat area (leave room for scrollbar and roster on right)
@@ -2112,5 +2213,118 @@ function GB:ToggleBridgeFrame()
         self.mainFrame:Hide()
     else
         self.mainFrame:Show()
+    end
+end
+
+-- Update debug display with real-time traffic stats (multi-column layout)
+function GB:UpdateDebugDisplay()
+    if not self.debugText then return end
+
+    local now = GetTime()
+    local elapsed = now - self.trafficStats.lastReset
+    if elapsed == 0 then elapsed = 1 end
+
+    local total = self.trafficStats.bnet + self.trafficStats.whisper + self.trafficStats.guild
+
+    -- Calculate connection counts
+    local bnetCount = 0
+    for _ in pairs(self.connectedBridgeUsers) do
+        bnetCount = bnetCount + 1
+    end
+    local altCount = 0
+    for _ in pairs(self.connectedWhisperAlts) do
+        altCount = altCount + 1
+    end
+
+    -- Build clean vertical layout with proper spacing
+    local lines = {}
+    table.insert(lines, "|cff00ff00=== MNET TRAFFIC DEBUG ===|r")
+    table.insert(lines, string.format("Uptime: %ds | Total: %d msgs (%.1f/sec)", math.floor(elapsed), total, total/elapsed))
+    table.insert(lines, "")
+
+    -- Message Counts by Channel
+    table.insert(lines, "|cffffd700MESSAGE COUNTS (BY CHANNEL)|r")
+    table.insert(lines, string.format("  BNet:        %6d msgs  (%.2f/sec)", self.trafficStats.bnet, self.trafficStats.bnet / elapsed))
+    table.insert(lines, string.format("  Whisper:     %6d msgs  (%.2f/sec)", self.trafficStats.whisper, self.trafficStats.whisper / elapsed))
+    table.insert(lines, string.format("  Guild Relay: %6d msgs  (%.2f/sec)", self.trafficStats.guild, self.trafficStats.guild / elapsed))
+    table.insert(lines, "")
+
+    -- Message Breakdown by Type
+    table.insert(lines, "|cffffd700MESSAGE BREAKDOWN (BY TYPE)|r")
+    table.insert(lines, string.format("  Handshakes:   %6d msgs  (%.2f/sec)", self.trafficStats.handshakes or 0, (self.trafficStats.handshakes or 0) / elapsed))
+    table.insert(lines, string.format("  Roster Full:  %6d msgs  (%.2f/sec)", self.trafficStats.rosterFull or 0, (self.trafficStats.rosterFull or 0) / elapsed))
+    table.insert(lines, string.format("  Roster Delta: %6d msgs  (%.2f/sec)", self.trafficStats.rosterDelta or 0, (self.trafficStats.rosterDelta or 0) / elapsed))
+    table.insert(lines, string.format("  Roster Req:   %6d msgs  (%.2f/sec)", self.trafficStats.rosterRequest or 0, (self.trafficStats.rosterRequest or 0) / elapsed))
+    table.insert(lines, string.format("  Party:        %6d msgs  (%.2f/sec)", self.trafficStats.party or 0, (self.trafficStats.party or 0) / elapsed))
+    table.insert(lines, string.format("  Chat:         %6d msgs  (%.2f/sec)", self.trafficStats.chat or 0, (self.trafficStats.chat or 0) / elapsed))
+    table.insert(lines, "")
+
+    -- Queue Status
+    table.insert(lines, "|cffffd700QUEUE STATUS|r")
+    local queueColor1 = #self.outgoingQueue > 20 and "|cffff0000" or "|cffffffff"
+    local queueColor2 = #self.guildRelayQueue > 10 and "|cffff0000" or "|cffffffff"
+    table.insert(lines, string.format("  BNet/Whisper: %s%3d msgs|r %s", queueColor1, #self.outgoingQueue, #self.outgoingQueue > 20 and "|cffff0000(HIGH!)|r" or ""))
+    table.insert(lines, string.format("  Guild Relay:  %s%3d msgs|r %s", queueColor2, #self.guildRelayQueue, #self.guildRelayQueue > 10 and "|cffff0000(HIGH!)|r" or ""))
+    table.insert(lines, "")
+
+    -- Throttle Settings
+    table.insert(lines, "|cffffd700THROTTLE SETTINGS|r")
+    table.insert(lines, string.format("  BNet/Whisper: %.2fs between msgs", self.SEND_THROTTLE_DELAY))
+    table.insert(lines, string.format("  Guild Relay:  %.2fs between msgs", self.GUILD_RELAY_THROTTLE))
+    table.insert(lines, string.format("  Roster Sync:  %.0fs between broadcasts", self.ROSTER_SYNC_THROTTLE))
+    table.insert(lines, string.format("  Party Sync:   %.0fs between broadcasts", self.PARTY_SYNC_THROTTLE))
+    table.insert(lines, "")
+
+    -- Connections
+    table.insert(lines, "|cffffd700CONNECTIONS|r")
+    table.insert(lines, string.format("  BNet Friends: %d", bnetCount))
+    table.insert(lines, string.format("  Whisper Alts: %d", altCount))
+    table.insert(lines, "")
+
+    -- Feature Flags
+    table.insert(lines, "|cffffd700FEATURES|r")
+    local bridgeStatus = MNetDB.bridgeEnabled and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local relayStatus = MNetDB.enableGuildRelay and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local rosterRelayStatus = MNetDB.relayRosterToGuild and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local partyStatus = MNetDB.enablePartySync and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+    local trafficStatus = self.enableTrafficDebug and "|cff00ff00ON|r" or "|cffff0000OFF|r"
+
+    table.insert(lines, string.format("  Bridge:              %s", bridgeStatus))
+    table.insert(lines, string.format("  Guild Relay:         %s", relayStatus))
+    table.insert(lines, string.format("  Roster Relay (Guild):%s", rosterRelayStatus))
+    table.insert(lines, string.format("  Party Sync:          %s", partyStatus))
+    table.insert(lines, string.format("  Traffic Debug:       %s", trafficStatus))
+
+    -- Party size warning
+    local partySize = GetNumGroupMembers()
+    if partySize > 0 then
+        table.insert(lines, "")
+        table.insert(lines, string.format("|cffffd700PARTY/RAID SIZE:|r %d members", partySize))
+        if partySize >= 20 and MNetDB.enablePartySync then
+            table.insert(lines, "|cffff0000⚠ WARNING: Large raid detected! Consider '/mn party' to disable party sync|r")
+        end
+    end
+
+    table.insert(lines, "")
+    table.insert(lines, "|cff888888Commands: /mn traffic (enable chat logging) | /mn stats (show stats) | /mn help (all commands)|r")
+    table.insert(lines, "|cff888888Auto-updates every second|r")
+
+    self.debugText:SetText(table.concat(lines, "\n"))
+
+    -- Update scroll container height based on text content
+    local textHeight = self.debugText:GetStringHeight()
+    self.debugTextContainer:SetHeight(math.max(textHeight + 20, self.debugScrollFrame:GetHeight()))
+
+    -- Update scrollbar range
+    local scrollRange = math.max(0, textHeight - self.debugScrollFrame:GetHeight())
+    self.debugScrollBar:SetMinMaxValues(0, scrollRange)
+
+    -- Hide scrollbar if not needed
+    if scrollRange <= 0 then
+        self.debugScrollBar:Hide()
+        self.debugScrollFrame:SetPoint("BOTTOMRIGHT", -8, 8)  -- Expand to full width
+    else
+        self.debugScrollBar:Show()
+        self.debugScrollFrame:SetPoint("BOTTOMRIGHT", -24, 8)  -- Leave room for scrollbar
     end
 end

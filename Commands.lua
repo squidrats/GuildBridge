@@ -153,9 +153,77 @@ SlashCmdList["MDGANET"] = function(msg)
         -- Current filter
         print("|cffffd700Current Filter:|r " .. (GB.currentFilter or "All"))
 
+    elseif cmd == "relay" or cmd == "guildrelay" then
+        -- Toggle guild relay feature
+        MNetDB.enableGuildRelay = not MNetDB.enableGuildRelay
+        if MNetDB.enableGuildRelay then
+            print("|cff00ff00MNet:|r Guild relay |cff00ff00ENABLED|r - Guildmates without BNet connections will see cross-guild messages.")
+            print("  |cffff0000WARNING:|r This feature sends messages on the GUILD addon channel and may cause disconnects with heavy traffic.")
+        else
+            print("|cff00ff00MNet:|r Guild relay |cffff0000DISABLED|r - Only you will see cross-guild messages from your BNet friends.")
+        end
+
+    elseif cmd == "relayroster" then
+        -- Toggle roster relay to guild
+        MNetDB.relayRosterToGuild = not MNetDB.relayRosterToGuild
+        if MNetDB.relayRosterToGuild then
+            print("|cff00ff00MNet:|r Roster relay to guild |cff00ff00ENABLED|r")
+            print("  |cffff0000WARNING:|r Roster data is LARGE and is the #1 cause of disconnects. Use at your own risk!")
+        else
+            print("|cff00ff00MNet:|r Roster relay to guild |cffff0000DISABLED|r - Roster updates stay on BNet only (recommended)")
+        end
+
+    elseif cmd == "party" or cmd == "partysync" then
+        -- Toggle party sync
+        MNetDB.enablePartySync = not MNetDB.enablePartySync
+        if MNetDB.enablePartySync then
+            print("|cff00ff00MNet:|r Party sync |cff00ff00ENABLED|r")
+        else
+            print("|cff00ff00MNet:|r Party sync |cffff0000DISABLED|r - Party status will not be shared")
+            print("  |cff888888This is recommended if you're in a large raid to reduce traffic|r")
+        end
+
+    elseif cmd == "traffic" then
+        -- Toggle traffic debugging
+        GB.enableTrafficDebug = not GB.enableTrafficDebug
+        if GB.enableTrafficDebug then
+            print("|cff00ff00MNet:|r Traffic debugging |cff00ff00ENABLED|r")
+            print("  You'll see real-time traffic stats in chat. Use /mn traffic again to disable.")
+            -- Reset stats when enabling
+            GB.trafficStats = {
+                bnet = 0, whisper = 0, guild = 0, lastReset = GetTime(),
+                handshakes = 0, rosterFull = 0, rosterDelta = 0, rosterRequest = 0, party = 0, chat = 0
+            }
+        else
+            print("|cff00ff00MNet:|r Traffic debugging |cffff0000DISABLED|r")
+        end
+
+    elseif cmd == "stats" then
+        -- Show traffic stats
+        local now = GetTime()
+        local elapsed = now - GB.trafficStats.lastReset
+        if GB.trafficStats.lastReset == 0 then
+            print("|cff00ff00MNet:|r Traffic stats not available yet. Use |cffffd700/mn traffic|r to enable tracking.")
+            return
+        end
+
+        local total = GB.trafficStats.bnet + GB.trafficStats.whisper + GB.trafficStats.guild
+        print("|cff00ff00MNet Traffic Stats|r (last " .. math.floor(elapsed) .. "s):")
+        print("  BNet messages: " .. GB.trafficStats.bnet .. " (" .. string.format("%.2f", GB.trafficStats.bnet / elapsed) .. "/sec)")
+        print("  Whisper messages: " .. GB.trafficStats.whisper .. " (" .. string.format("%.2f", GB.trafficStats.whisper / elapsed) .. "/sec)")
+        print("  Guild relay: " .. GB.trafficStats.guild .. " (" .. string.format("%.2f", GB.trafficStats.guild / elapsed) .. "/sec)")
+        print("  |cffffd700Total:|r " .. total .. " messages in " .. math.floor(elapsed) .. " seconds")
+        print("  |cffffd700Rate:|r " .. string.format("%.1f", total/elapsed) .. " msg/sec")
+        print("  |cffffd700Queue:|r BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
+
     elseif cmd == "help" then
         print("|cff00ff00MNet Commands:|r")
         print("  |cffffd700/mn|r - Toggle MNet window")
+        print("  |cffffd700/mn party|r - Toggle party sync (disable in large raids)")
+        print("  |cffffd700/mn traffic|r - Toggle traffic debugging")
+        print("  |cffffd700/mn stats|r - Show traffic statistics")
+        print("  |cffffd700/mn relay|r - Toggle guild chat relay (default ON)")
+        print("  |cffffd700/mn relayroster|r - Toggle roster relay to guild (default ON)")
         print("  |cffffd700/mn alt <Name-Realm>|r - Register a same-account alt")
         print("  |cffffd700/mn removealt <Name-Realm>|r - Remove a registered alt")
         print("  |cffffd700/mn alts|r - List registered alts")
