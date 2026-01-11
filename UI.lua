@@ -196,12 +196,12 @@ function GB:RefreshRoster()
             local guildName = guildInfo and guildInfo.guildName or "Unknown"
             local guildHomeRealm = guildInfo and guildInfo.guildHomeRealm or nil
 
-            for name, info in pairs(roster.members) do
+            for memberKey, info in pairs(roster.members) do
                 -- Determine realm for display
                 local displayRealm = info.realm or guildHomeRealm
 
                 addMember({
-                    name = name,
+                    name = info.name or memberKey,  -- Use stored name, not the key
                     realm = displayRealm,
                     guildName = guildName,
                     guildHomeRealm = guildHomeRealm,
@@ -353,6 +353,9 @@ function GB:RefreshRoster()
                 if self.memberData.inParty then
                     GameTooltip:AddLine("In Party", 0.4, 0.8, 1.0)
                 end
+                if not self.memberData.isMe then
+                    GameTooltip:AddLine("Ctrl+Click to invite", 0.5, 0.5, 0.5)
+                end
                 GameTooltip:AddLine("Right-click for options", 0.5, 0.5, 0.5)
                 GameTooltip:Show()
             end)
@@ -361,10 +364,26 @@ function GB:RefreshRoster()
                 GameTooltip:Hide()
             end)
 
-            -- Right-click to show context menu
+            -- Right-click to show context menu, Ctrl+Left-click to invite
             entry:SetScript("OnMouseDown", function(self, button)
                 if button == "RightButton" then
                     GB:ShowRosterContextMenu(self.memberData)
+                elseif button == "LeftButton" and IsControlKeyDown() then
+                    -- Ctrl+Left-click to send party invite
+                    local memberName = self.memberData.name
+                    local memberRealm = self.memberData.realm
+                    if memberName then
+                        -- Build full name with realm for cross-realm invites
+                        local fullName = memberName
+                        if memberRealm and memberRealm ~= "" then
+                            fullName = memberName .. "-" .. memberRealm
+                        end
+                        -- Don't invite yourself
+                        if not self.memberData.isMe then
+                            C_PartyInfo.InviteUnit(fullName)
+                            print("|cff00ff00MNet:|r Invited " .. fullName .. " to party")
+                        end
+                    end
                 end
             end)
 
@@ -1288,7 +1307,10 @@ updatePageVisibility = function()
         end
     end
 
-    GB:RefreshMessages()
+    -- Refresh messages for both chat and status pages (they show different content)
+    if GB.currentPage == "chat" or GB.currentPage == "status" then
+        GB:RefreshMessages()
+    end
     GB:RefreshRoster()
 end
 
@@ -2279,6 +2301,64 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, string.format("  BNet Friends: %d", bnetCount))
     table.insert(lines, string.format("  Whisper Alts: %d", altCount))
     table.insert(lines, "")
+
+    -- Connection Details (show who has connections and what guilds they bridge)
+    if bnetCount > 0 then
+        table.insert(lines, "|cffffd700BNET BRIDGE USERS|r")
+        for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+            local charName = info.characterName or "Unknown"
+            local guildName = info.guildName or "Unknown"
+            local realm = info.guildHomeRealm or ""
+            local guildDisplay = guildName
+            if realm and realm ~= "" then
+                guildDisplay = guildName .. "-" .. realm
+            end
+            table.insert(lines, string.format("  %s in <%s>", charName, guildDisplay))
+        end
+        table.insert(lines, "")
+    end
+
+    if altCount > 0 then
+        table.insert(lines, "|cffffd700WHISPER ALT BRIDGES|r")
+        for altName, info in pairs(self.connectedWhisperAlts) do
+            local guildName = info.guildName or "Unknown"
+            local realm = info.guildHomeRealm or ""
+            local guildDisplay = guildName
+            if realm and realm ~= "" then
+                guildDisplay = guildName .. "-" .. realm
+            end
+            table.insert(lines, string.format("  %s in <%s>", altName, guildDisplay))
+        end
+        table.insert(lines, "")
+    end
+
+    -- Guild Relay Bridges (guildmates who are relaying data to us)
+    local relayCount = 0
+    for _ in pairs(self.guildRelayBridges) do
+        relayCount = relayCount + 1
+    end
+    if relayCount > 0 then
+        table.insert(lines, "|cffffd700GUILD RELAY BRIDGES|r")
+        table.insert(lines, "  |cff888888(Guildmates relaying cross-guild data to you)|r")
+        for senderName, info in pairs(self.guildRelayBridges) do
+            -- Build list of guilds this person is bridging
+            local guildsList = {}
+            for guildClubId, _ in pairs(info.guilds) do
+                -- Look up guild name from knownGuilds
+                local guildName = "Unknown"
+                for filterKey, guildInfo in pairs(self.knownGuilds) do
+                    if tostring(guildInfo.guildClubId) == tostring(guildClubId) then
+                        guildName = guildInfo.guildName or "Unknown"
+                        break
+                    end
+                end
+                table.insert(guildsList, guildName)
+            end
+            local guildsStr = table.concat(guildsList, ", ")
+            table.insert(lines, string.format("  %s relaying <%s>", senderName, guildsStr))
+        end
+        table.insert(lines, "")
+    end
 
     -- Feature Flags
     table.insert(lines, "|cffffd700FEATURES|r")

@@ -43,6 +43,11 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                         GB.connectedWhisperAlts[altName] = nil
                     end
                 end
+                for senderName, info in pairs(GB.guildRelayBridges) do
+                    if now - info.lastSeen > 300 then
+                        GB.guildRelayBridges[senderName] = nil
+                    end
+                end
                 GB:UpdateConnectionIndicators()
                 -- Clean up stale roster data
                 if GB.CleanupStaleRosters then

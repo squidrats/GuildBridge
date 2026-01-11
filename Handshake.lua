@@ -141,16 +141,25 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
             local filterKey = self:MakeFilterKey(guildName, self:GetGuildHomeRealmFromClubId(guildClubId))
             local roster = self.guildRosters[filterKey]
-            if roster and roster.members and roster.members[charName] then
-                -- Remove the character from the roster
-                roster.members[charName] = nil
-                roster.version = roster.version + 1
-                roster.lastUpdate = GetTime()
-                self.guildRosters[filterKey] = roster
+            if roster and roster.members then
+                -- Build the memberKey - need to check both "Name" and "Name-Realm" formats
+                local guildHomeRealm = self:GetGuildHomeRealmFromClubId(guildClubId)
+                local memberKey = charName
+                if charRealm and charRealm ~= "" and charRealm ~= guildHomeRealm then
+                    memberKey = charName .. "-" .. charRealm
+                end
 
-                -- Refresh UI to show updated roster
-                if self.RefreshRoster then
-                    self:RefreshRoster()
+                if roster.members[memberKey] then
+                    -- Remove the character from the roster
+                    roster.members[memberKey] = nil
+                    roster.version = roster.version + 1
+                    roster.lastUpdate = GetTime()
+                    self.guildRosters[filterKey] = roster
+
+                    -- Refresh UI to show updated roster
+                    if self.RefreshRoster then
+                        self:RefreshRoster()
+                    end
                 end
             end
         end
@@ -352,16 +361,25 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
             local filterKey = self:MakeFilterKey(guildName, self:GetGuildHomeRealmFromClubId(guildClubId))
             local roster = self.guildRosters[filterKey]
-            if roster and roster.members and roster.members[charName] then
-                -- Remove the character from the roster
-                roster.members[charName] = nil
-                roster.version = roster.version + 1
-                roster.lastUpdate = GetTime()
-                self.guildRosters[filterKey] = roster
+            if roster and roster.members then
+                -- Build the memberKey - need to check both "Name" and "Name-Realm" formats
+                local guildHomeRealm = self:GetGuildHomeRealmFromClubId(guildClubId)
+                local memberKey = charName
+                if charRealm and charRealm ~= "" and charRealm ~= guildHomeRealm then
+                    memberKey = charName .. "-" .. charRealm
+                end
 
-                -- Refresh UI to show updated roster
-                if self.RefreshRoster then
-                    self:RefreshRoster()
+                if roster.members[memberKey] then
+                    -- Remove the character from the roster
+                    roster.members[memberKey] = nil
+                    roster.version = roster.version + 1
+                    roster.lastUpdate = GetTime()
+                    self.guildRosters[filterKey] = roster
+
+                    -- Refresh UI to show updated roster
+                    if self.RefreshRoster then
+                        self:RefreshRoster()
+                    end
                 end
             end
         end

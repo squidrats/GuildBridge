@@ -24,6 +24,7 @@ GB.recentMessages = {}        -- Hash -> timestamp for deduplication
 GB.onlineFriends = {}         -- Track online friends
 GB.connectedBridgeUsers = {}  -- gameAccountID -> { guildName, realmName, guildHomeRealm, lastSeen }
 GB.connectedWhisperAlts = {}  -- "Name-Realm" -> { guildName, guildHomeRealm, lastSeen }
+GB.guildRelayBridges = {}     -- "Name-Realm" -> { guilds = {guildClubId1 = true, ...}, lastSeen } - Track who is relaying what
 GB.lastGuildActivity = {}     -- filterKey -> last message timestamp
 GB.lastHandshakeTime = 0      -- Throttle handshake sending
 GB.lastWhisperHandshakeTime = 0 -- Throttle whisper handshake sending
@@ -151,10 +152,10 @@ function GB:EnsureSavedVariables()
         MNetDB.filterNativeChat = false
     end
     if MNetDB.enableGuildRelay == nil then
-        MNetDB.enableGuildRelay = true  -- Default to ON
+        MNetDB.enableGuildRelay = true  -- Default ON (relay cross-guild chat to guildmates)
     end
     if MNetDB.relayRosterToGuild == nil then
-        MNetDB.relayRosterToGuild = true  -- Default ON
+        MNetDB.relayRosterToGuild = true  -- Default ON (relay roster data to guildmates via GUILD channel)
     end
     -- Party sync is now always local-only (no saved variable needed)
     if MNetDB.knownGuilds == nil then

@@ -51,7 +51,9 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
 
     local filterKey = guildName .. "-" .. guildClubId
 
-    if not self.knownGuilds[filterKey] then
+    local isNewGuild = not self.knownGuilds[filterKey]
+
+    if isNewGuild then
         self.knownGuilds[filterKey] = {
             guildName = guildName,
             guildHomeRealm = guildHomeRealm,
@@ -61,9 +63,21 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
         }
         MNetDB.knownGuilds = self.knownGuilds
 
+        -- Migrate any roster data from temporary "Unknown-" key to proper key
+        local tempKey = "Unknown-" .. guildClubId
+        if self.guildRosters[tempKey] then
+            self.guildRosters[filterKey] = self.guildRosters[tempKey]
+            self.guildRosters[tempKey] = nil
+        end
+
         -- Rebuild tabs to show the new guild
         if self.RebuildTabs then
             self:RebuildTabs()
+        end
+
+        -- Refresh roster to show migrated data
+        if self.RefreshRoster then
+            self:RefreshRoster()
         end
     elseif guildHomeRealm and not self.knownGuilds[filterKey].guildHomeRealm then
         -- Update home realm if we didn't have it
@@ -711,9 +725,9 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
 
     -- Relay cross-guild messages to guildmates via guild addon channel
     -- This allows guildmates without BNet connections to see the message
-    -- Only relay if the message is from a DIFFERENT guild than ours
-    local myGuildName = GetGuildInfo("player")
-    if MNetDB.bridgeEnabled and guildPart and guildPart ~= myGuildName then
+    -- Only relay if the message is from a DIFFERENT guild than ours (compare club IDs, not names)
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if MNetDB.bridgeEnabled and guildClubIdPart and myGuildClubId and tostring(guildClubIdPart) ~= tostring(myGuildClubId) then
         -- Relay the payload (strip the [GB] prefix, guild relay will add [GBGR])
         self:RelayToGuildmates(payload)
     end
@@ -878,8 +892,9 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
     end
 
     -- Relay cross-guild messages to guildmates via guild addon channel
-    local myGuildName = GetGuildInfo("player")
-    if MNetDB.bridgeEnabled and guildPart and guildPart ~= myGuildName then
+    -- Only relay if the message is from a DIFFERENT guild than ours (compare club IDs, not names)
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if MNetDB.bridgeEnabled and guildClubIdPart and myGuildClubId and tostring(guildClubIdPart) ~= tostring(myGuildClubId) then
         self:RelayToGuildmates(payload)
     end
 end
@@ -893,15 +908,27 @@ function GB:RefreshMessages()
     if self.currentPage == "status" then
         local myName = UnitName("player")
         local myGuildName = GetGuildInfo("player")
+        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
         local myShort = self.guildShortNames[myGuildName] or myGuildName or "No Guild"
         local now = GetTime()
 
-        -- Collect connection pairs from BNet friends
+        -- Collect connection pairs from BNet friends (only cross-guild connections)
         local connections = {}
+        local debugTotal = 0
+        local debugSameGuild = 0
+        local debugStale = 0
+
         for gameAccountID, info in pairs(self.connectedBridgeUsers) do
-            if now - info.lastSeen < 300 then
-                -- Use stored character name, or fall back to "Unknown"
+            debugTotal = debugTotal + 1
+            local age = now - info.lastSeen
+
+            if age >= 300 then
+                debugStale = debugStale + 1
+            elseif info.guildClubId and myGuildClubId and tostring(info.guildClubId) == tostring(myGuildClubId) then
+                debugSameGuild = debugSameGuild + 1
+            else
+                -- Show this connection (different guild or no guild info)
                 local charName = info.characterName or "Unknown"
                 local charRealm = info.characterRealm or info.realmName or ""
                 local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
@@ -916,26 +943,60 @@ function GB:RefreshMessages()
             end
         end
 
-        -- Also collect connections from whisper alts (same Battle.net account)
+        -- Also collect connections from whisper alts (same Battle.net account, only cross-guild)
         for altName, info in pairs(self.connectedWhisperAlts) do
             if now - info.lastSeen < 300 then
-                local charName, charRealm = altName:match("([^%-]+)%-?(.*)")
-                charName = charName or altName
-                charRealm = charRealm or info.realmName or ""
-                local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
-                table.insert(connections, {
-                    charName = charName,
-                    charRealm = charRealm,
-                    guildName = info.guildName,
-                    guildShort = theirShort,
-                    guildHomeRealm = info.guildHomeRealm or info.realmName or "",
-                    connectionType = "whisper",
-                })
+                -- Skip ONLY if they're in the same guild as us (compare club IDs, not names)
+                if not info.guildClubId or not myGuildClubId or tostring(info.guildClubId) ~= tostring(myGuildClubId) then
+                    local charName, charRealm = altName:match("([^%-]+)%-?(.*)")
+                    charName = charName or altName
+                    charRealm = charRealm or info.realmName or ""
+                    local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
+                    table.insert(connections, {
+                        charName = charName,
+                        charRealm = charRealm,
+                        guildName = info.guildName,
+                        guildShort = theirShort,
+                        guildHomeRealm = info.guildHomeRealm or info.realmName or "",
+                        connectionType = "whisper",
+                    })
+                end
+            end
+        end
+
+        -- Also collect connections from guild relay bridges (guildmates relaying cross-guild messages)
+        for senderName, info in pairs(self.guildRelayBridges) do
+            if now - info.lastSeen < 300 and info.guilds then
+                -- For each guild this person is relaying, create a connection entry
+                for guildClubIdStr, _ in pairs(info.guilds) do
+                    -- Skip if they're relaying our own guild (shouldn't happen, but just in case)
+                    if not myGuildClubId or tostring(guildClubIdStr) ~= tostring(myGuildClubId) then
+                        -- Look up guild info for this club ID
+                        local guildName, guildHomeRealm = self:LookupGuildInfoByClubId(guildClubIdStr, senderName, "guild")
+                        if guildName then
+                            local charName, charRealm = senderName:match("([^%-]+)%-?(.*)")
+                            charName = charName or senderName
+                            charRealm = charRealm ~= "" and charRealm or ""
+                            local theirShort = self.guildShortNames[guildName] or guildName or ""
+                            table.insert(connections, {
+                                charName = charName,
+                                charRealm = charRealm,
+                                guildName = guildName,
+                                guildShort = theirShort,
+                                guildHomeRealm = guildHomeRealm or "",
+                                connectionType = "guild-relay",
+                            })
+                        end
+                    end
+                end
             end
         end
 
         if #connections == 0 then
-            self.scrollFrame:AddMessage("|cffff8888No bridge connections active.|r")
+            self.scrollFrame:AddMessage("|cffff8888No cross-guild bridge connections active.|r")
+            if debugTotal > 0 then
+                self.scrollFrame:AddMessage("|cff888888(Total: " .. debugTotal .. ", Same Guild: " .. debugSameGuild .. ", Stale: " .. debugStale .. ")|r")
+            end
         else
             for _, conn in ipairs(connections) do
                 local myRealmSuffix = myGuildHomeRealm and myGuildHomeRealm ~= "" and ("-" .. myGuildHomeRealm) or ""
@@ -944,8 +1005,13 @@ function GB:RefreshMessages()
                 local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
                 local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
 
-                -- Add indicator for whisper (same-account) connections
-                local connIndicator = conn.connectionType == "whisper" and " |cffaaaaaa(alt)|r" or ""
+                -- Add indicator for connection type
+                local connIndicator = ""
+                if conn.connectionType == "whisper" then
+                    connIndicator = " |cffaaaaaa(alt)|r"
+                elseif conn.connectionType == "guild-relay" then
+                    connIndicator = " |cffaaaaaa(guild relay)|r"
+                end
 
                 self.scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide .. connIndicator)
             end
@@ -1068,10 +1134,20 @@ end
 -- Handle incoming guild relay message (from a guildmate who has BNet connection)
 function GB:HandleGuildRelayMessage(payload, sender)
     -- Don't process our own relays
+    -- Compare full "Name-Realm" to handle same names on different realms
     local myName = UnitName("player")
-    -- sender format is "Name" or "Name-Realm"
-    local senderName = sender:match("^([^%-]+)") or sender
-    if senderName == myName then return end
+    local myRealm = GetRealmName()
+    local myFullName = myName .. "-" .. myRealm
+
+    -- Normalize sender to include realm if missing
+    local senderFullName = sender
+    if not sender:find("-") then
+        senderFullName = sender .. "-" .. myRealm
+    end
+
+    if senderFullName == myFullName then
+        return
+    end
 
     -- Parse the relayed payload (same format as BNet messages)
     local guildPart, guildRealmPart, factionPart, originPart, originRealmPart, sourcePart, targetPart, messageIdPart, guildHomeRealmPart, classFilePart, guildClubIdPart, messagePart
@@ -1123,8 +1199,36 @@ function GB:HandleGuildRelayMessage(payload, sender)
         return
     end
 
+    -- Track guild relay bridge (sender is relaying messages from this guild)
+    if guildClubIdPart then
+        self:TrackGuildRelayBridge(sender, guildClubIdPart)
+    end
+
     -- Display the message
     self:AddBridgeMessage(originPart, guildPart, factionPart, messagePart, originRealmPart, guildHomeRealmPart, classFilePart, guildClubIdPart, nil)
+end
+
+-- Track who is relaying guild data (for status page visibility)
+function GB:TrackGuildRelayBridge(sender, guildClubId)
+    if not sender or not guildClubId then return end
+
+    -- Ensure sender has realm (add current realm if missing)
+    local senderKey = sender
+    if not sender:find("-") then
+        senderKey = sender .. "-" .. GetRealmName()
+    end
+
+    -- Initialize tracking entry for this sender
+    if not self.guildRelayBridges[senderKey] then
+        self.guildRelayBridges[senderKey] = {
+            guilds = {},
+            lastSeen = GetTime(),
+        }
+    end
+
+    -- Track that this sender is relaying data for this guild
+    self.guildRelayBridges[senderKey].guilds[tostring(guildClubId)] = true
+    self.guildRelayBridges[senderKey].lastSeen = GetTime()
 end
 
 -- Handle incoming guild relay for roster data
@@ -1137,9 +1241,33 @@ function GB:HandleGuildRelayRoster(payload, sender)
     local msgType = payload:sub(1, 6)
     local msgData = payload:sub(7)
 
-    if msgType == "[GBRF]" and self.HandleRosterFullMessage then
+    if msgType == "[GBGM]" then
+        -- Guild metadata message - register the guild so we can properly display roster
+        local guildClubId, guildName, guildHomeRealm = msgData:match("([^|]+)|([^|]+)|([^|]*)")
+        if guildClubId and guildName then
+            guildHomeRealm = guildHomeRealm ~= "" and guildHomeRealm or nil
+            guildClubId = tonumber(guildClubId) or guildClubId
+            -- Register the guild using standard function
+            self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
+
+            -- Track that this sender is relaying this guild's data
+            self:TrackGuildRelayBridge(sender, guildClubId)
+        end
+    elseif msgType == "[GBRF]" and self.HandleRosterFullMessage then
+        -- Extract guildClubId from roster message to track relay source
+        local _, guildClubId = msgData:match("([^|]+)|([^|]+)")
+        if guildClubId then
+            guildClubId = tonumber(guildClubId) or guildClubId
+            self:TrackGuildRelayBridge(sender, guildClubId)
+        end
         self:HandleRosterFullMessage(msgData, sender, "guild")
     elseif msgType == "[GBRD]" and self.HandleRosterDeltaMessage then
+        -- Extract guildClubId from delta message to track relay source
+        local _, guildClubId = msgData:match("([^|]+)|([^|]+)")
+        if guildClubId then
+            guildClubId = tonumber(guildClubId) or guildClubId
+            self:TrackGuildRelayBridge(sender, guildClubId)
+        end
         self:HandleRosterDeltaMessage(msgData, sender, "guild")
     elseif msgType == "[GBPY]" then
         -- Party sync removed - ignore party messages

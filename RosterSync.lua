@@ -60,6 +60,53 @@ function GB:FindFilterKeyByClubId(guildClubId)
     return nil
 end
 
+-- Lookup guild name and homeRealm from clubId (checks connections and known guilds)
+function GB:LookupGuildInfoByClubId(guildClubId, senderID, senderType)
+    if not guildClubId then return nil, nil end
+
+    -- First check if it's our own guild
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if myGuildClubId and tostring(myGuildClubId) == tostring(guildClubId) then
+        local myGuildName = GetGuildInfo("player")
+        local myGuildHomeRealm = self:GetGuildHomeRealm()
+        return myGuildName, myGuildHomeRealm
+    end
+
+    -- Check connected users (BNet or whisper alts) who might have this guild
+    if senderType == "bnet" then
+        local info = self.connectedBridgeUsers[senderID]
+        if info and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildName, info.guildHomeRealm
+        end
+    elseif senderType == "whisper" then
+        local info = self.connectedWhisperAlts[senderID]
+        if info and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildName, info.guildHomeRealm
+        end
+    elseif senderType == "guild" then
+        -- Guild relay - senderID is character name, so search all connections for this guild
+        for _, info in pairs(self.connectedBridgeUsers) do
+            if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+                return info.guildName, info.guildHomeRealm
+            end
+        end
+        for _, info in pairs(self.connectedWhisperAlts) do
+            if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+                return info.guildName, info.guildHomeRealm
+            end
+        end
+    end
+
+    -- Fallback: check known guilds
+    for _, info in pairs(self.knownGuilds) do
+        if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+            return info.guildName, info.guildHomeRealm
+        end
+    end
+
+    return nil, nil
+end
+
 -- Get online guild members from WoW API
 function GB:GetOnlineGuildMembers()
     local members = {}
@@ -72,12 +119,16 @@ function GB:GetOnlineGuildMembers()
         local name, _, _, _, _, _, _, _, online, _, classFile = GetGuildRosterInfo(i)
         if name and online then
             local charName, charRealm = strsplit("-", name)
+            -- Use full "Name-Realm" as key when realm differs to handle same-named characters on different realms
             -- Only include realm if different from guild home realm
             local realm = nil
+            local memberKey = charName
             if charRealm and charRealm ~= myGuildHomeRealm then
                 realm = charRealm
+                memberKey = charName .. "-" .. charRealm  -- Unique key for cross-realm members
             end
-            members[charName] = {
+            members[memberKey] = {
+                name = charName,  -- Store original name separately
                 realm = realm,
                 class = classFile,
             }
@@ -92,8 +143,10 @@ function GB:ChunkRosterData(members)
     local chunks = {}
     local currentChunk = ""
 
-    for name, info in pairs(members) do
-        local entry = name .. ":" .. (info.realm or "") .. ":" .. self:AbbrevClass(info.class)
+    for memberKey, info in pairs(members) do
+        -- Use the original character name for serialization, not the key
+        local charName = info.name or memberKey
+        local entry = charName .. ":" .. (info.realm or "") .. ":" .. self:AbbrevClass(info.class)
 
         if #currentChunk + #entry + 1 > self.ROSTER_CHUNK_SIZE then
             if currentChunk ~= "" then
@@ -263,12 +316,14 @@ local function doSendRosterDeltas()
             deltaStr = deltaStr .. "-" .. name
         end
     end
-    for name, info in pairs(deltas.added or {}) do
+    for memberKey, info in pairs(deltas.added or {}) do
         -- Skip if this person was removed after being added (net effect depends on order)
         -- Since we track final state in roster, check if they're currently online
-        if roster.members[name] then
+        if roster.members[memberKey] then
             if deltaStr ~= "" then deltaStr = deltaStr .. "," end
-            deltaStr = deltaStr .. "+" .. name .. ":" .. (info.realm or "") .. ":" .. GB:AbbrevClass(info.class)
+            -- Use original character name for serialization
+            local charName = info.name or memberKey
+            deltaStr = deltaStr .. "+" .. charName .. ":" .. (info.realm or "") .. ":" .. GB:AbbrevClass(info.class)
         end
     end
 
@@ -417,6 +472,14 @@ function GB:HandleRosterFullMessage(payload, senderID, senderType)
     if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            -- Include guild metadata so non-BNet guildmates can register the guild
+            local guildName, guildHomeRealm = self:LookupGuildInfoByClubId(guildClubId, senderID, senderType)
+            if guildName then
+                -- First send guild metadata message so guildmates can register the guild
+                local metaPayload = "[GBGM]" .. guildClubId .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
+                self:RelayDataToGuildmates(metaPayload)
+            end
+            -- Then relay the roster data
             self:RelayDataToGuildmates("[GBRF]" .. payload)
         end
     end
@@ -486,8 +549,15 @@ function GB:AssembleAndApplyRoster(guildClubId, pending)
         for entry in fullData:gmatch("[^,]+") do
             local name, realm, classAbbr = entry:match("([^:]*):([^:]*):([^:]*)")
             if name and name ~= "" then
-                members[name] = {
-                    realm = realm ~= "" and realm or nil,
+                -- Use same key logic as sender: "Name-Realm" when realm is present
+                local memberKey = name
+                local realmValue = realm ~= "" and realm or nil
+                if realmValue then
+                    memberKey = name .. "-" .. realmValue
+                end
+                members[memberKey] = {
+                    name = name,  -- Store original name separately
+                    realm = realmValue,
                     class = self:ExpandClassAbbrev(classAbbr),
                 }
             end
@@ -497,8 +567,51 @@ function GB:AssembleAndApplyRoster(guildClubId, pending)
     -- Find or create filterKey for this guild
     local filterKey = self:FindFilterKeyByClubId(guildClubId)
     if not filterKey then
-        -- Create a temporary filterKey
-        filterKey = "Unknown-" .. guildClubId
+        -- Try to find guild info from connected users who sent this roster
+        -- This handles the case where roster arrives before guild metadata
+        local guildName, guildHomeRealm = nil, nil
+
+        -- Check all connected users for this guild club ID
+        for _, info in pairs(self.connectedBridgeUsers) do
+            if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+                guildName = info.guildName
+                guildHomeRealm = info.guildHomeRealm
+                break
+            end
+        end
+
+        -- Also check whisper alts
+        if not guildName then
+            for _, info in pairs(self.connectedWhisperAlts) do
+                if info.guildClubId and tostring(info.guildClubId) == tostring(guildClubId) then
+                    guildName = info.guildName
+                    guildHomeRealm = info.guildHomeRealm
+                    break
+                end
+            end
+        end
+
+        -- Also check guild relay bridges
+        if not guildName then
+            for _, info in pairs(self.guildRelayBridges) do
+                if info.guilds and info.guilds[tostring(guildClubId)] then
+                    -- We know they're relaying this guild, but we don't have the name yet
+                    -- Just wait for the metadata message
+                    break
+                end
+            end
+        end
+
+        -- If we found guild info, register it and use proper filterKey
+        if guildName then
+            self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
+            filterKey = self:FindFilterKeyByClubId(guildClubId)
+        end
+
+        -- If still no filterKey, use temporary one (will be migrated when metadata arrives)
+        if not filterKey then
+            filterKey = "Unknown-" .. guildClubId
+        end
     end
 
     -- Store roster
@@ -525,6 +638,14 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            -- Include guild metadata so non-BNet guildmates can register the guild
+            local guildName, guildHomeRealm = self:LookupGuildInfoByClubId(guildClubId, senderID, senderType)
+            if guildName then
+                -- First send guild metadata message so guildmates can register the guild
+                local metaPayload = "[GBGM]" .. guildClubId .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
+                self:RelayDataToGuildmates(metaPayload)
+            end
+            -- Then relay the roster data
             self:RelayDataToGuildmates("[GBRD]" .. payload)
         end
     end
@@ -566,13 +687,20 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
             -- Add member
             local name, realm, classAbbr = data:match("([^:]*):([^:]*):([^:]*)")
             if name and name ~= "" then
-                roster.members[name] = {
-                    realm = realm ~= "" and realm or nil,
+                -- Use same key logic as sender: "Name-Realm" when realm is present
+                local memberKey = name
+                local realmValue = realm ~= "" and realm or nil
+                if realmValue then
+                    memberKey = name .. "-" .. realmValue
+                end
+                roster.members[memberKey] = {
+                    name = name,  -- Store original name separately
+                    realm = realmValue,
                     class = self:ExpandClassAbbrev(classAbbr),
                 }
             end
         elseif prefix == "-" then
-            -- Remove member
+            -- Remove member - data is the memberKey (might be "Name-Realm")
             roster.members[data] = nil
         end
     end

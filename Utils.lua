@@ -121,6 +121,24 @@ function GB:HasConnectedUserInGuild(filterKey)
         end
     end
 
+    -- Also check guild relay bridges (guildmates relaying cross-guild messages)
+    for senderName, info in pairs(self.guildRelayBridges) do
+        if now - info.lastSeen < 300 and info.guilds then
+            -- Check if this person is relaying messages for the guild we're checking
+            for guildClubIdStr, _ in pairs(info.guilds) do
+                -- Try to match by club ID
+                local candidateFilterKey = filterKey:match("^(.+)%-(%d+)$")
+                if candidateFilterKey then
+                    -- filterKey is in format "GuildName-ClubId"
+                    local keyGuildName, keyClubId = filterKey:match("^(.+)%-(%d+)$")
+                    if tostring(guildClubIdStr) == keyClubId then
+                        return true
+                    end
+                end
+            end
+        end
+    end
+
     return false
 end
 
