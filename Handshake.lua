@@ -219,6 +219,19 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         self:RefreshMessages()
     end
 
+    -- If this is a cross-guild connection and guild relay is enabled, notify guildmates immediately
+    -- This allows guild relay connections to appear/update as fast as BNet connections
+    if MNetDB.enableGuildRelay and guildClubId then
+        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            -- Send guild metadata to notify guildmates of this active bridge connection
+            local metaPayload = "[GBGM]" .. tostring(guildClubId) .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
+            if self.RelayDataToGuildmates then
+                self:RelayDataToGuildmates(metaPayload)
+            end
+        end
+    end
+
     -- If they sent HELLO, respond with PONG immediately
     if handshakeType == "HELLO" then
         self:SendHandshakeMessage("PONG", senderGameAccountID)

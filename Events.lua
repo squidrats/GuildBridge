@@ -186,8 +186,20 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
         -- Remove connectedBridgeUsers entries for friends who are no longer online
-        for gameAccountID, _ in pairs(GB.connectedBridgeUsers) do
+        -- Notify guildmates if we lose a cross-guild bridge connection
+        for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
             if not currentFriendIDs[gameAccountID] then
+                -- Notify guildmates that this bridge connection was lost
+                if MNetDB.enableGuildRelay and info.guildClubId then
+                    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+                    if myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                        -- Send disconnection metadata to guildmates
+                        local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
+                        if GB.RelayDataToGuildmates then
+                            GB:RelayDataToGuildmates(metaPayload)
+                        end
+                    end
+                end
                 GB.connectedBridgeUsers[gameAccountID] = nil
             end
         end
@@ -214,6 +226,21 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 -- Joined an allowed guild - send handshake to all friends and alts
                 GB:ForceSendHandshake()
                 GB:ForceSendWhisperHandshake()
+
+                -- Also notify new guildmates about any existing cross-guild bridge connections
+                -- This happens when switching guilds
+                if MNetDB.enableGuildRelay then
+                    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+                    for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+                        if info.guildClubId and myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                            -- Notify new guildmates about this bridge connection
+                            local metaPayload = "[GBGM]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
+                            if GB.RelayDataToGuildmates then
+                                GB:RelayDataToGuildmates(metaPayload)
+                            end
+                        end
+                    end
+                end
             else
                 -- Left guild or joined non-allowed guild - notify peers we're gone
                 -- Send a "LEAVE" message so peers remove us from their connections
@@ -257,6 +284,20 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- This ensures they know we're disconnecting
         GB:SendLeaveNotification()
         GB:SendWhisperLeaveNotification()
+
+        -- Notify guildmates that we're losing all our cross-guild bridge connections
+        if MNetDB.enableGuildRelay and IsInGuild() then
+            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+            for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+                if info.guildClubId and myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                    -- Send disconnection metadata to guildmates
+                    local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
+                    if GB.RelayDataToGuildmates then
+                        GB:RelayDataToGuildmates(metaPayload)
+                    end
+                end
+            end
+        end
 
     elseif event == "CHAT_MSG_SYSTEM" then
         -- Detect when a whisper alt goes offline

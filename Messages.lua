@@ -1229,13 +1229,28 @@ function GB:TrackGuildRelayBridge(sender, guildClubId)
     -- Track that this sender is relaying data for this guild
     self.guildRelayBridges[senderKey].guilds[tostring(guildClubId)] = true
     self.guildRelayBridges[senderKey].lastSeen = GetTime()
+
+    -- Update connection indicators immediately so status changes as soon as ANY message is received
+    self:UpdateConnectionIndicators()
 end
 
 -- Handle incoming guild relay for roster data
 function GB:HandleGuildRelayRoster(payload, sender)
+    -- Don't process our own relays
+    -- Compare full "Name-Realm" to handle same names on different realms
     local myName = UnitName("player")
-    local senderName = sender:match("^([^%-]+)") or sender
-    if senderName == myName then return end
+    local myRealm = GetRealmName()
+    local myFullName = myName .. "-" .. myRealm
+
+    -- Normalize sender to include realm if missing
+    local senderFullName = sender
+    if not sender:find("-") then
+        senderFullName = sender .. "-" .. myRealm
+    end
+
+    if senderFullName == myFullName then
+        return
+    end
 
     -- Determine message type from first 6 chars
     local msgType = payload:sub(1, 6)
@@ -1252,6 +1267,30 @@ function GB:HandleGuildRelayRoster(payload, sender)
 
             -- Track that this sender is relaying this guild's data
             self:TrackGuildRelayBridge(sender, guildClubId)
+        end
+    elseif msgType == "[GBGX]" then
+        -- Guild bridge disconnect message - sender lost their connection to this guild
+        local guildClubId = msgData:match("([^|]+)")
+        if guildClubId then
+            guildClubId = tonumber(guildClubId) or guildClubId
+            -- Remove this sender's relay tracking for this guild
+            if self.guildRelayBridges[sender] and self.guildRelayBridges[sender].guilds then
+                self.guildRelayBridges[sender].guilds[tostring(guildClubId)] = nil
+                -- If sender has no more guilds, remove the entry entirely
+                local hasAnyGuilds = false
+                for _ in pairs(self.guildRelayBridges[sender].guilds) do
+                    hasAnyGuilds = true
+                    break
+                end
+                if not hasAnyGuilds then
+                    self.guildRelayBridges[sender] = nil
+                end
+            end
+            -- Update UI to reflect lost connection
+            self:UpdateConnectionIndicators()
+            if self.currentPage == "status" then
+                self:RefreshMessages()
+            end
         end
     elseif msgType == "[GBRF]" and self.HandleRosterFullMessage then
         -- Extract guildClubId from roster message to track relay source
