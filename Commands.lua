@@ -174,14 +174,10 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "party" or cmd == "partysync" then
-        -- Toggle party sync
-        MNetDB.enablePartySync = not MNetDB.enablePartySync
-        if MNetDB.enablePartySync then
-            print("|cff00ff00MNet:|r Party sync |cff00ff00ENABLED|r")
-        else
-            print("|cff00ff00MNet:|r Party sync |cffff0000DISABLED|r - Party status will not be shared")
-            print("  |cff888888This is recommended if you're in a large raid to reduce traffic|r")
-        end
+        -- Party sync is now always local-only (no network traffic)
+        print("|cff00ff00MNet:|r Party indicators are now |cff00ff00LOCAL-ONLY|r")
+        print("  Party icons show only members in |cffffd700YOUR|r party/raid")
+        print("  |cff888888No network traffic - eliminates party sync disconnects!|r")
 
     elseif cmd == "traffic" then
         -- Toggle traffic debugging
@@ -219,7 +215,6 @@ SlashCmdList["MDGANET"] = function(msg)
     elseif cmd == "help" then
         print("|cff00ff00MNet Commands:|r")
         print("  |cffffd700/mn|r - Toggle MNet window")
-        print("  |cffffd700/mn party|r - Toggle party sync (disable in large raids)")
         print("  |cffffd700/mn traffic|r - Toggle traffic debugging")
         print("  |cffffd700/mn stats|r - Show traffic statistics")
         print("  |cffffd700/mn relay|r - Toggle guild chat relay (default ON)")

@@ -44,11 +44,11 @@ GB.rosterRequestQueue = {}    -- Queue of pending roster requests { targetID, gu
 GB.isProcessingRosterRequests = false  -- Flag to track if roster request queue is processing
 GB.ROSTER_REQUEST_THROTTLE = 5.0  -- seconds between roster requests (spreads out initial handshake burst)
 
--- Party sync state
-GB.partyMembers = {}          -- "Name-Realm" -> true (players in my current party)
-GB.remotePartyMembers = {}    -- "Name-Realm" -> { partyLeader = "Name-Realm" } (party info from other players)
-GB.lastPartySyncBroadcast = 0 -- timestamp of last party sync broadcast
-GB.PARTY_SYNC_THROTTLE = 5    -- seconds between party broadcasts (INCREASED to reduce traffic)
+-- Party sync state (local-only, no network traffic)
+GB.partyMembers = {}          -- "Name-Realm" -> true (players in my current party/raid)
+
+-- Login state tracking
+GB.loginHandshakeTimestamp = 0  -- Track when we last did the staggered login sequence
 
 -- Intra-guild relay state (relay cross-guild messages to guildmates via GUILD channel)
 GB.GUILD_RELAY_THROTTLE = 2.0 -- seconds between guild relay messages (GUILD channel has VERY strict rate limits)
@@ -156,9 +156,7 @@ function GB:EnsureSavedVariables()
     if MNetDB.relayRosterToGuild == nil then
         MNetDB.relayRosterToGuild = true  -- Default ON
     end
-    if MNetDB.enablePartySync == nil then
-        MNetDB.enablePartySync = true  -- Default ON, but can disable if in large raids
-    end
+    -- Party sync is now always local-only (no saved variable needed)
     if MNetDB.knownGuilds == nil then
         MNetDB.knownGuilds = {}
     end

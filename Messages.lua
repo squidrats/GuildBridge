@@ -592,9 +592,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         end
         return
     elseif message:sub(1, 6) == "[GBPY]" then
-        if self.HandlePartyMessage then
-            self:HandlePartyMessage(message:sub(7), senderID, "bnet")
-        end
+        -- Party sync removed - ignore party messages
         return
     end
 
@@ -785,9 +783,7 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
         end
         return
     elseif message:sub(1, 6) == "[GBPY]" then
-        if self.HandlePartyMessage then
-            self:HandlePartyMessage(message:sub(7), sender, "whisper")
-        end
+        -- Party sync removed - ignore party messages
         return
     end
 
@@ -1145,8 +1141,8 @@ function GB:HandleGuildRelayRoster(payload, sender)
         self:HandleRosterFullMessage(msgData, sender, "guild")
     elseif msgType == "[GBRD]" and self.HandleRosterDeltaMessage then
         self:HandleRosterDeltaMessage(msgData, sender, "guild")
-    elseif msgType == "[GBPY]" and self.HandlePartyMessage then
-        self:HandlePartyMessage(msgData, sender, "guild")
+    elseif msgType == "[GBPY]" then
+        -- Party sync removed - ignore party messages
     end
 end
 

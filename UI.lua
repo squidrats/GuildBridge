@@ -2272,7 +2272,6 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, string.format("  BNet/Whisper: %.2fs between msgs", self.SEND_THROTTLE_DELAY))
     table.insert(lines, string.format("  Guild Relay:  %.2fs between msgs", self.GUILD_RELAY_THROTTLE))
     table.insert(lines, string.format("  Roster Sync:  %.0fs between broadcasts", self.ROSTER_SYNC_THROTTLE))
-    table.insert(lines, string.format("  Party Sync:   %.0fs between broadcasts", self.PARTY_SYNC_THROTTLE))
     table.insert(lines, "")
 
     -- Connections
@@ -2286,23 +2285,19 @@ function GB:UpdateDebugDisplay()
     local bridgeStatus = MNetDB.bridgeEnabled and "|cff00ff00ON|r" or "|cffff0000OFF|r"
     local relayStatus = MNetDB.enableGuildRelay and "|cff00ff00ON|r" or "|cffff0000OFF|r"
     local rosterRelayStatus = MNetDB.relayRosterToGuild and "|cff00ff00ON|r" or "|cffff0000OFF|r"
-    local partyStatus = MNetDB.enablePartySync and "|cff00ff00ON|r" or "|cffff0000OFF|r"
     local trafficStatus = self.enableTrafficDebug and "|cff00ff00ON|r" or "|cffff0000OFF|r"
 
     table.insert(lines, string.format("  Bridge:              %s", bridgeStatus))
     table.insert(lines, string.format("  Guild Relay:         %s", relayStatus))
     table.insert(lines, string.format("  Roster Relay (Guild):%s", rosterRelayStatus))
-    table.insert(lines, string.format("  Party Sync:          %s", partyStatus))
+    table.insert(lines, string.format("  Party Indicators:    %s", "|cff00ff00LOCAL-ONLY|r"))
     table.insert(lines, string.format("  Traffic Debug:       %s", trafficStatus))
 
-    -- Party size warning
+    -- Party size info (no warning needed - party sync is local-only now)
     local partySize = GetNumGroupMembers()
     if partySize > 0 then
         table.insert(lines, "")
-        table.insert(lines, string.format("|cffffd700PARTY/RAID SIZE:|r %d members", partySize))
-        if partySize >= 20 and MNetDB.enablePartySync then
-            table.insert(lines, "|cffff0000⚠ WARNING: Large raid detected! Consider '/mn party' to disable party sync|r")
-        end
+        table.insert(lines, string.format("|cffffd700PARTY/RAID SIZE:|r %d members (local tracking only)", partySize))
     end
 
     table.insert(lines, "")

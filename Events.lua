@@ -18,9 +18,6 @@ GB.eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")  -- For detecting offline alts
 GB.eventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")  -- For roster sync
 GB.eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")  -- For party sync
 
--- Track if we've done initial handshake
-local initialHandshakeDone = false
-
 -- Main event handler
 GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -75,10 +72,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 if GB.ClearDisconnectedRosters then
                     GB:ClearDisconnectedRosters()
                 end
-                -- Clear stale party data for disconnected users
-                if GB.CleanupStalePartyData then
-                    GB:CleanupStalePartyData()
-                end
+                -- Party data cleanup removed (party sync is now local-only)
             end)
         end
 
@@ -111,11 +105,16 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end)
 
-        if not initialHandshakeDone then
-            initialHandshakeDone = true
-            -- STAGGER initial messages over 60 seconds to prevent login disconnect burst
+        -- STAGGER initial messages to prevent login disconnect burst
+        -- Use time-based throttle to prevent rapid reconnects from flooding (60s cooldown)
+        local now = GetTime()
+        local timeSinceLastLogin = now - GB.loginHandshakeTimestamp
+
+        if timeSinceLastLogin >= 60 then
+            GB.loginHandshakeTimestamp = now
+
             -- Request roster data first (no network traffic, just local API call)
-            C_Timer.After(5, function()
+            C_Timer.After(2, function()
                 if C_GuildInfo and C_GuildInfo.GuildRoster then
                     C_GuildInfo.GuildRoster()  -- Request fresh roster from server
                 elseif GuildRoster then
@@ -123,23 +122,22 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end)
             -- Process roster (won't broadcast due to initial capture skip)
-            C_Timer.After(10, function()
+            C_Timer.After(3, function()
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
             end)
-            -- BNet handshake much later - this queues messages to 50+ friends at 1 msg/sec
-            -- Wait 30 seconds to give any startup traffic time to clear
-            C_Timer.After(30, function()
+            -- BNet handshake - queues messages to 50+ friends at 1 msg/sec
+            C_Timer.After(5, function()
                 GB:ForceSendHandshake()
             end)
-            -- Whisper handshake even later
-            C_Timer.After(45, function()
+            -- Whisper handshake slightly later
+            C_Timer.After(10, function()
                 GB:ForceSendWhisperHandshake()
             end)
-            -- Initial party sync last (and only if enabled) - skipBroadcast=true to prevent login burst
-            C_Timer.After(60, function()
-                if GB.ProcessPartyUpdate and MNetDB.enablePartySync then
+            -- Party sync is now local-only (no network traffic)
+            C_Timer.After(15, function()
+                if GB.ProcessPartyUpdate then
                     GB:ProcessPartyUpdate(true)  -- true = skip initial broadcast
                 end
             end)
@@ -148,9 +146,15 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "BN_CONNECTED" then
         -- Battle.net reconnected
         GB:UpdateOnlineFriends()
-        C_Timer.After(2, function()
-            GB:ForceSendHandshake()
-        end)
+        -- CRITICAL: Use same delay as login to prevent reconnect flood (disconnects often trigger immediate BN_CONNECTED)
+        -- Throttle to prevent rapid reconnect attempts from queuing hundreds of messages
+        local now = GetTime()
+        if now - GB.loginHandshakeTimestamp >= 60 then
+            GB.loginHandshakeTimestamp = now
+            C_Timer.After(5, function()
+                GB:ForceSendHandshake()
+            end)
+        end
 
     elseif event == "BN_FRIEND_INFO_CHANGED" then
         -- Debounce: This event fires VERY frequently (zone changes, level ups, etc.)

@@ -228,10 +228,7 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         end
     end
 
-    -- Send party status on PONG (new connections only) - this is fine since it's 1 message per friend
-    if handshakeType == "PONG" and self.SendPartyStatusTo and MNetDB.enablePartySync then
-        self:SendPartyStatusTo(senderGameAccountID, "bnet")
-    end
+    -- Party sync removed - now local-only (no network traffic)
 
     return true
 end
@@ -431,10 +428,7 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         end
     end
 
-    -- Send party status on PONG (new connections only)
-    if handshakeType == "PONG" and self.SendPartyStatusTo and MNetDB.enablePartySync then
-        self:SendPartyStatusTo(senderName, "whisper")
-    end
+    -- Party sync removed - now local-only (no network traffic)
 
     return true
 end
