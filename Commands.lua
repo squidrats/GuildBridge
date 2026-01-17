@@ -1,6 +1,3 @@
--- MNet Commands Module
--- Slash command handlers
-
 local addonName, GB = ...
 
 SLASH_MDGANET1 = "/mn"
@@ -10,20 +7,16 @@ SlashCmdList["MDGANET"] = function(msg)
     cmd = cmd:lower()
 
     if cmd == "" then
-        -- No argument, toggle UI
         GB:ToggleBridgeFrame()
 
     elseif cmd == "alt" or cmd == "addalt" then
-        -- Register an alt character for same-account communication
         if arg == "" then
             print("|cff00ff00MNet:|r Usage: /mn alt CharacterName-Realm")
             print("  Example: /mn alt Myalt-Illidan")
             return
         end
 
-        -- Ensure Name-Realm format
         if not arg:find("-") then
-            -- Try to add player's realm if none specified
             local realm = GetRealmName()
             arg = arg .. "-" .. realm
         end
@@ -38,12 +31,10 @@ SlashCmdList["MDGANET"] = function(msg)
             MNetDB.registeredAlts = GB.registeredAlts
             print("|cff00ff00MNet:|r Registered alt: " .. arg)
             print("  Handshakes will be sent to this character when online.")
-            -- Send handshake immediately to new alt
             GB:SendWhisperHandshakeToAlt(arg)
         end
 
     elseif cmd == "removealt" or cmd == "delalt" then
-        -- Remove a registered alt
         if arg == "" then
             print("|cff00ff00MNet:|r Usage: /mn removealt CharacterName-Realm")
             return
@@ -68,7 +59,6 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "alts" or cmd == "listalt" or cmd == "listalts" then
-        -- List all registered alts
         MNetDB.registeredAlts = MNetDB.registeredAlts or {}
         GB.registeredAlts = MNetDB.registeredAlts
 
@@ -92,10 +82,8 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "debug" then
-        -- Debug info for troubleshooting
         print("|cff00ff00MNet Debug Info:|r")
 
-        -- My guild info
         local myGuildName = GetGuildInfo("player")
         local myGuildHomeRealm = GB:GetGuildHomeRealm()
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
@@ -103,7 +91,6 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  Home Realm: " .. (myGuildHomeRealm or "nil"))
         print("  Club ID: " .. tostring(myGuildClubId or "nil"))
 
-        -- Known guilds
         print("|cffffd700Known Guilds:|r")
         local guildCount = 0
         for filterKey, info in pairs(GB.knownGuilds) do
@@ -117,7 +104,6 @@ SlashCmdList["MDGANET"] = function(msg)
             print("  (none)")
         end
 
-        -- BNet connections
         print("|cffffd700BNet Connections:|r")
         local bnetCount = 0
         local now = GetTime()
@@ -134,7 +120,6 @@ SlashCmdList["MDGANET"] = function(msg)
             print("  (none)")
         end
 
-        -- Whisper alt connections
         print("|cffffd700Whisper Alt Connections:|r")
         local altCount = 0
         for altName, info in pairs(GB.connectedWhisperAlts) do
@@ -150,11 +135,9 @@ SlashCmdList["MDGANET"] = function(msg)
             print("  (none)")
         end
 
-        -- Current filter
         print("|cffffd700Current Filter:|r " .. (GB.currentFilter or "All"))
 
     elseif cmd == "relay" or cmd == "guildrelay" then
-        -- Toggle guild relay feature
         MNetDB.enableGuildRelay = not MNetDB.enableGuildRelay
         if MNetDB.enableGuildRelay then
             print("|cff00ff00MNet:|r Guild relay |cff00ff00ENABLED|r - Guildmates without BNet connections will see cross-guild messages.")
@@ -164,7 +147,6 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "relayroster" then
-        -- Toggle roster relay to guild
         MNetDB.relayRosterToGuild = not MNetDB.relayRosterToGuild
         if MNetDB.relayRosterToGuild then
             print("|cff00ff00MNet:|r Roster relay to guild |cff00ff00ENABLED|r")
@@ -174,19 +156,16 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "party" or cmd == "partysync" then
-        -- Party sync is now always local-only (no network traffic)
         print("|cff00ff00MNet:|r Party indicators are now |cff00ff00LOCAL-ONLY|r")
         print("  Party icons show only members in |cffffd700YOUR|r party/raid")
         print("  |cff888888No network traffic - eliminates party sync disconnects!|r")
 
     elseif cmd == "traffic" then
-        -- Toggle traffic debugging
         GB.enableTrafficDebug = not GB.enableTrafficDebug
-        MNetDB.enableTrafficDebug = GB.enableTrafficDebug  -- Persist across reloads
+        MNetDB.enableTrafficDebug = GB.enableTrafficDebug
         if GB.enableTrafficDebug then
             print("|cff00ff00MNet:|r Traffic debugging |cff00ff00ENABLED|r (persists across reloads)")
             print("  You'll see real-time traffic stats in chat. Use /mn traffic again to disable.")
-            -- Reset stats when enabling
             GB.trafficStats = {
                 bnet = 0, whisper = 0, guild = 0, lastReset = GetTime(),
                 handshakes = 0, rosterFull = 0, rosterDelta = 0, rosterRequest = 0, party = 0, chat = 0
@@ -196,7 +175,6 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
     elseif cmd == "stats" then
-        -- Show traffic stats
         local now = GetTime()
         local elapsed = now - GB.trafficStats.lastReset
         if GB.trafficStats.lastReset == 0 then
@@ -214,9 +192,8 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700Queue:|r BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
 
     elseif cmd == "events" then
-        -- Toggle event debugging (connection/disconnection tracking)
         GB.enableEventDebug = not GB.enableEventDebug
-        MNetDB.enableEventDebug = GB.enableEventDebug  -- Persist across reloads
+        MNetDB.enableEventDebug = GB.enableEventDebug
         if GB.enableEventDebug then
             print("|cff00ff00MNet:|r Event debugging |cff00ff00ENABLED|r (persists across reloads)")
             print("  You'll see connection/disconnection events in chat.")

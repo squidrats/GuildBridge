@@ -1,85 +1,72 @@
--- MNet Core Module
--- Initializes the addon namespace and shared data structures
-
 local addonName, GB = ...
 
--- Export addon namespace globally for other modules
 MNet = GB
 
--- Constants
 GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
 GB.BRIDGE_ADDON_PREFIX = "MNet"
-GB.MESSAGE_DEDUPE_WINDOW = 10  -- seconds
-GB.HANDSHAKE_THROTTLE = 10    -- seconds
-GB.SEND_THROTTLE_DELAY = 1.0  -- seconds between outgoing messages (INCREASED to prevent disconnect)
-GB.FRIEND_INFO_DEBOUNCE = 5   -- seconds to debounce BN_FRIEND_INFO_CHANGED events
-GB.lastFriendInfoChange = 0   -- timestamp of last processed friend info change
-GB.lastBNConnectedTime = 0    -- timestamp of last processed BN_CONNECTED event
-GB.lastBNetAPICall = 0        -- global throttle: timestamp of last BNet API call (prevents overlap)
-GB.BNET_API_THROTTLE = 5      -- minimum seconds between any BNet API calls
-GB.lastPlayerEnteringWorld = 0 -- timestamp of last PLAYER_ENTERING_WORLD (for coordinating with BN_CONNECTED)
+GB.MESSAGE_DEDUPE_WINDOW = 10
+GB.HANDSHAKE_THROTTLE = 10
+GB.SEND_THROTTLE_DELAY = 1.0
+GB.FRIEND_INFO_DEBOUNCE = 5
+GB.lastFriendInfoChange = 0
+GB.lastBNConnectedTime = 0
+GB.lastBNetAPICall = 0
+GB.BNET_API_THROTTLE = 5
+GB.lastPlayerEnteringWorld = 0
 
--- Shared state
-GB.currentFilter = nil        -- nil = All, or guild-realm key
-GB.currentPage = "chat"       -- "chat" or "status"
-GB.messageHistory = {}        -- Store messages for filtering
-GB.knownGuilds = {}           -- Track unique guild+realm combinations
-GB.recentMessages = {}        -- Hash -> timestamp for deduplication
-GB.onlineFriends = {}         -- Track online friends
-GB.connectedBridgeUsers = {}  -- gameAccountID -> { guildName, realmName, guildHomeRealm, lastSeen }
-GB.connectedWhisperAlts = {}  -- "Name-Realm" -> { guildName, guildHomeRealm, lastSeen }
-GB.guildRelayBridges = {}     -- "Name-Realm" -> { guilds = {guildClubId1 = true, ...}, lastSeen } - Track who is relaying what
-GB.lastGuildActivity = {}     -- filterKey -> last message timestamp
-GB.lastHandshakeTime = 0      -- Throttle handshake sending
-GB.lastWhisperHandshakeTime = 0 -- Throttle whisper handshake sending
-GB.guildChatFrames = {}       -- Track which chat frames have guild chat enabled
-GB.outgoingQueue = {}         -- Queue of outgoing messages { type, target, prefix, payload }
-GB.isProcessingQueue = false  -- Flag to track if queue processor is running
+GB.currentFilter = nil
+GB.currentPage = "chat"
+GB.messageHistory = {}
+GB.knownGuilds = {}
+GB.recentMessages = {}
+GB.onlineFriends = {}
+GB.connectedBridgeUsers = {}
+GB.connectedWhisperAlts = {}
+GB.guildRelayBridges = {}
+GB.lastGuildActivity = {}
+GB.lastHandshakeTime = 0
+GB.lastWhisperHandshakeTime = 0
+GB.guildChatFrames = {}
+GB.outgoingQueue = {}
+GB.isProcessingQueue = false
 
--- Roster sync state
-GB.guildRosters = {}          -- filterKey -> { members = {}, version = 0, lastUpdate = 0 }
-GB.pendingRosterChunks = {}   -- guildClubId -> { chunks = {}, total = n, version = v, startTime = t }
-GB.pendingRosterDeltas = { added = {}, removed = {} }  -- Accumulate deltas during throttle
-GB.rosterDeltaTimerScheduled = false  -- Prevent multiple timers
-GB.ROSTER_SYNC_THROTTLE = 10  -- seconds between roster broadcasts (INCREASED to reduce traffic)
-GB.ROSTER_CHUNK_SIZE = 200    -- bytes per chunk payload
-GB.lastRosterBroadcast = 0    -- timestamp of last roster broadcast
-GB.rosterUpdatePending = false -- debounce flag for roster updates
-GB.rosterRequestQueue = {}    -- Queue of pending roster requests { targetID, guildClubId, targetType, timestamp }
-GB.isProcessingRosterRequests = false  -- Flag to track if roster request queue is processing
-GB.ROSTER_REQUEST_THROTTLE = 5.0  -- seconds between roster requests (spreads out initial handshake burst)
+GB.guildRosters = {}
+GB.pendingRosterChunks = {}
+GB.pendingRosterDeltas = { added = {}, removed = {} }
+GB.rosterDeltaTimerScheduled = false
+GB.ROSTER_SYNC_THROTTLE = 10
+GB.ROSTER_CHUNK_SIZE = 200
+GB.lastRosterBroadcast = 0
+GB.rosterUpdatePending = false
+GB.rosterRequestQueue = {}
+GB.isProcessingRosterRequests = false
+GB.ROSTER_REQUEST_THROTTLE = 5.0
 
--- Party sync state (local-only, no network traffic)
-GB.partyMembers = {}          -- "Name-Realm" -> true (players in my current party/raid)
+GB.partyMembers = {}
 
--- Login state tracking
-GB.loginHandshakeTimestamp = 0  -- Track when we last did the staggered login sequence
+GB.loginHandshakeTimestamp = 0
 
--- Intra-guild relay state (relay cross-guild messages to guildmates via GUILD channel)
-GB.GUILD_RELAY_THROTTLE = 2.0 -- seconds between guild relay messages (GUILD channel has VERY strict rate limits)
-GB.lastGuildRelayTime = 0     -- timestamp of last guild relay
-GB.guildRelayQueue = {}       -- Queue of messages to relay to guild
-GB.isProcessingGuildRelay = false -- Flag to track if guild relay queue processor is running
-GB.recentGuildRelays = {}     -- Hash -> timestamp for deduplication of relays (prevents multiple people relaying same msg)
+GB.GUILD_RELAY_THROTTLE = 2.0
+GB.lastGuildRelayTime = 0
+GB.guildRelayQueue = {}
+GB.isProcessingGuildRelay = false
+GB.recentGuildRelays = {}
 
--- Traffic debugging
 GB.trafficStats = {
-    bnet = 0,           -- BNet messages sent
-    whisper = 0,        -- Whisper messages sent
-    guild = 0,          -- Guild channel messages sent
-    lastReset = GetTime(),  -- Last time stats were reset (initialize to current time)
-    -- Message type breakdown
-    handshakes = 0,     -- [GBHS] handshake messages
-    rosterFull = 0,     -- [GBRF] full roster chunks
-    rosterDelta = 0,    -- [GBRD] roster delta updates
-    rosterRequest = 0,  -- [GBRR] roster requests
-    party = 0,          -- [GBPY] party status updates
-    chat = 0,           -- [GB] regular chat messages
+    bnet = 0,
+    whisper = 0,
+    guild = 0,
+    lastReset = GetTime(),
+    handshakes = 0,
+    rosterFull = 0,
+    rosterDelta = 0,
+    rosterRequest = 0,
+    party = 0,
+    chat = 0,
 }
-GB.enableTrafficDebug = false  -- Toggle with /mn traffic
-GB.enableEventDebug = false    -- Toggle with /mn events - tracks connection/disconnection events
+GB.enableTrafficDebug = false
+GB.enableEventDebug = false
 
--- UI references (populated by UI module)
 GB.mainFrame = nil
 GB.scrollFrame = nil
 GB.inputBox = nil
@@ -87,45 +74,36 @@ GB.tabButtons = {}
 GB.pageTabs = {}
 GB.muteCheckbox = nil
 
--- Event frame for addon-wide events
 GB.eventFrame = CreateFrame("Frame")
 
--- Guild configuration
 GB.guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
     ["MAKE DUROTAR GREAT AGAIN"] = "MDGA",
     ["Bestiez"] = "Bestiez",
 }
 
--- Guild numbers for display (based on server)
--- Format: ["GuildName-HomeRealm"] = number
 GB.guildNumbers = {
     ["MAKE DUROTAR GREAT AGAIN-Tichondrius"] = 1,
     ["MAKE DUROTAR GREAT AGAIN-Illidan"] = 3,
     ["MAKE DUROTAR GREAT AGAIN-Thrall"] = 2,
-    ["Bestiez-Tichondrius"] = 2,  -- Example, adjust as needed
+    ["Bestiez-Tichondrius"] = 2,
 }
 
--- Check if ElvUI is loaded
 function GB:HasElvUI()
     return ElvUI ~= nil
 end
 
--- Get guild number for a guild based on its home realm
 function GB:GetGuildNumber(guildName, guildHomeRealm)
     if not guildName then return nil end
     local key = guildName .. "-" .. (guildHomeRealm or "")
     return self.guildNumbers[key]
 end
 
--- Only relay messages from these guilds
 GB.allowedGuilds = {
-    -- ["MAKE ELWYNN GREAT AGAIN"] = true,
     ["MAKE DUROTAR GREAT AGAIN"] = true,
     ["Bestiez"] = true,
 }
 
--- Class colors for WoW classes (used for colored player names)
 GB.classColors = {
     ["WARRIOR"] = "C69B6D",
     ["PALADIN"] = "F48CBA",
@@ -142,7 +120,6 @@ GB.classColors = {
     ["EVOKER"] = "33937F",
 }
 
--- Initialize saved variables
 function GB:EnsureSavedVariables()
     if not MNetDB then
         MNetDB = {}
@@ -157,24 +134,20 @@ function GB:EnsureSavedVariables()
         MNetDB.filterNativeChat = false
     end
     if MNetDB.enableGuildRelay == nil then
-        MNetDB.enableGuildRelay = true  -- Default ON (relay cross-guild chat to guildmates)
+        MNetDB.enableGuildRelay = true
     end
     if MNetDB.relayRosterToGuild == nil then
-        MNetDB.relayRosterToGuild = true  -- Default ON (relay roster data to guildmates via GUILD channel)
+        MNetDB.relayRosterToGuild = true
     end
-    -- Party sync is now always local-only (no saved variable needed)
     if MNetDB.knownGuilds == nil then
         MNetDB.knownGuilds = {}
     end
-    -- Registered alts for same-account communication (Name-Realm format)
     if MNetDB.registeredAlts == nil then
         MNetDB.registeredAlts = {}
     end
-    -- Window position and size
     if MNetDB.windowPos == nil then
         MNetDB.windowPos = {}
     end
-    -- Debug flags (persist across reloads for debugging)
     if MNetDB.enableEventDebug == nil then
         MNetDB.enableEventDebug = false
     end
@@ -183,12 +156,10 @@ function GB:EnsureSavedVariables()
     end
     self.knownGuilds = MNetDB.knownGuilds
     self.registeredAlts = MNetDB.registeredAlts
-    -- Load debug flags from saved variables
     self.enableEventDebug = MNetDB.enableEventDebug
     self.enableTrafficDebug = MNetDB.enableTrafficDebug
 end
 
--- Save window position and size
 function GB:SaveWindowPosition()
     if not self.mainFrame then return end
     local point, _, relPoint, x, y = self.mainFrame:GetPoint()
@@ -199,11 +170,10 @@ function GB:SaveWindowPosition()
         y = y,
         width = self.mainFrame:GetWidth(),
         height = self.mainFrame:GetHeight(),
-        rosterWidth = self.rosterWidth,  -- Save roster width
+        rosterWidth = self.rosterWidth,
     }
 end
 
--- Restore window position and size
 function GB:RestoreWindowPosition()
     if not self.mainFrame then return end
     local pos = MNetDB.windowPos
@@ -214,13 +184,11 @@ function GB:RestoreWindowPosition()
     if pos and pos.width and pos.height then
         self.mainFrame:SetSize(pos.width, pos.height)
     end
-    -- Restore roster width (will be applied by UI module)
     if pos and pos.rosterWidth then
         self.rosterWidth = pos.rosterWidth
     end
 end
 
--- Create a filter key from guild name and realm
 function GB:MakeFilterKey(guildName, realmName)
     if not guildName then return nil end
     if realmName and realmName ~= "" then
@@ -229,28 +197,21 @@ function GB:MakeFilterKey(guildName, realmName)
     return guildName
 end
 
--- Get the guild's home realm using the API
--- GetGuildInfo returns the guild's realm as the 4th value (nil if same as player's realm)
 function GB:GetGuildHomeRealm()
     if not IsInGuild() then return nil end
 
-    -- GetGuildInfo returns: guildName, guildRankName, guildRankIndex, guildRealm
-    -- guildRealm is nil if the guild is on the same realm as the player
     local guildName, _, _, guildRealm = GetGuildInfo("player")
     if guildName then
         if guildRealm and guildRealm ~= "" then
             return guildRealm
         else
-            -- Guild is on player's realm
             return GetRealmName()
         end
     end
 
-    -- GetGuildInfo not ready yet, use player's realm as fallback
     return GetRealmName()
 end
 
--- Queue a BNet message for throttled sending
 function GB:QueueBNetMessage(gameAccountID, prefix, payload)
     table.insert(self.outgoingQueue, {
         type = "bnet",
@@ -261,7 +222,6 @@ function GB:QueueBNetMessage(gameAccountID, prefix, payload)
     self:ProcessQueue()
 end
 
--- Queue a whisper addon message for throttled sending
 function GB:QueueWhisperMessage(prefix, payload, targetName)
     table.insert(self.outgoingQueue, {
         type = "whisper",
@@ -272,7 +232,6 @@ function GB:QueueWhisperMessage(prefix, payload, targetName)
     self:ProcessQueue()
 end
 
--- Process the outgoing message queue with throttling
 function GB:ProcessQueue()
     if self.isProcessingQueue or #self.outgoingQueue == 0 then
         return
@@ -288,7 +247,6 @@ function GB:ProcessQueue()
 
         local msg = table.remove(GB.outgoingQueue, 1)
 
-        -- Track message type for debugging
         local msgType = "unknown"
         if msg.payload then
             if msg.payload:sub(1, 6) == "[GBHS]" then
@@ -326,7 +284,6 @@ function GB:ProcessQueue()
             end
         end
 
-        -- Schedule next message with delay
         if #GB.outgoingQueue > 0 then
             C_Timer.After(GB.SEND_THROTTLE_DELAY, processNext)
         else
@@ -337,22 +294,19 @@ function GB:ProcessQueue()
     processNext()
 end
 
--- Debug command to show diagnostic info
 SLASH_MNDEBUG1 = "/mndebug"
 SlashCmdList["MNDEBUG"] = function()
     print("=== MNet Debug ===")
 
-    -- My guild info
     local myGuildName = GetGuildInfo("player")
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     print("My guild: " .. (myGuildName or "nil") .. " (clubId: " .. tostring(myGuildClubId) .. ")")
     print("In allowedGuilds: " .. tostring(myGuildName and GB.allowedGuilds[myGuildName] or false))
 
-    -- Online friends
     local friends = GB:FindOnlineWoWFriends()
     print("Online WoW friends: " .. #friends)
     for i, friend in ipairs(friends) do
-        if i <= 5 then -- Only show first 5
+        if i <= 5 then
             print("  " .. (friend.characterName or "?") .. "-" .. (friend.realmName or "?") .. " | guildName: " .. tostring(friend.guildName))
         end
     end
@@ -360,7 +314,6 @@ SlashCmdList["MNDEBUG"] = function()
         print("  ... and " .. (#friends - 5) .. " more")
     end
 
-    -- Connected bridge users
     local connCount = 0
     for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
         connCount = connCount + 1
@@ -370,7 +323,6 @@ SlashCmdList["MNDEBUG"] = function()
     end
     print("Connected bridge users: " .. connCount)
 
-    -- Queue status
     print("Queue size: " .. #GB.outgoingQueue .. " | Processing: " .. tostring(GB.isProcessingQueue))
 
     print("=========================")

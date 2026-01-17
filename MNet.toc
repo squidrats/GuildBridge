@@ -5,20 +5,11 @@
 ## Version: 1.1
 ## SavedVariables: MNetDB
 
-# Core module - must load first (namespace and shared state)
 Core.lua
-
-# Utility functions
 Utils.lua
-
-# Feature modules
 Handshake.lua
 Messages.lua
 RosterSync.lua
-
-# UI components
 UI.lua
-
-# Event handling and slash commands
 Events.lua
 Commands.lua
