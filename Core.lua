@@ -14,6 +14,10 @@ GB.HANDSHAKE_THROTTLE = 10    -- seconds
 GB.SEND_THROTTLE_DELAY = 1.0  -- seconds between outgoing messages (INCREASED to prevent disconnect)
 GB.FRIEND_INFO_DEBOUNCE = 5   -- seconds to debounce BN_FRIEND_INFO_CHANGED events
 GB.lastFriendInfoChange = 0   -- timestamp of last processed friend info change
+GB.lastBNConnectedTime = 0    -- timestamp of last processed BN_CONNECTED event
+GB.lastBNetAPICall = 0        -- global throttle: timestamp of last BNet API call (prevents overlap)
+GB.BNET_API_THROTTLE = 5      -- minimum seconds between any BNet API calls
+GB.lastPlayerEnteringWorld = 0 -- timestamp of last PLAYER_ENTERING_WORLD (for coordinating with BN_CONNECTED)
 
 -- Shared state
 GB.currentFilter = nil        -- nil = All, or guild-realm key
@@ -73,6 +77,7 @@ GB.trafficStats = {
     chat = 0,           -- [GB] regular chat messages
 }
 GB.enableTrafficDebug = false  -- Toggle with /mn traffic
+GB.enableEventDebug = false    -- Toggle with /mn events - tracks connection/disconnection events
 
 -- UI references (populated by UI module)
 GB.mainFrame = nil
@@ -169,8 +174,18 @@ function GB:EnsureSavedVariables()
     if MNetDB.windowPos == nil then
         MNetDB.windowPos = {}
     end
+    -- Debug flags (persist across reloads for debugging)
+    if MNetDB.enableEventDebug == nil then
+        MNetDB.enableEventDebug = false
+    end
+    if MNetDB.enableTrafficDebug == nil then
+        MNetDB.enableTrafficDebug = false
+    end
     self.knownGuilds = MNetDB.knownGuilds
     self.registeredAlts = MNetDB.registeredAlts
+    -- Load debug flags from saved variables
+    self.enableEventDebug = MNetDB.enableEventDebug
+    self.enableTrafficDebug = MNetDB.enableTrafficDebug
 end
 
 -- Save window position and size

@@ -96,18 +96,24 @@ function GB:SendHandshakeMessage(handshakeType, targetGameAccountID)
 end
 
 -- Look up character name for a gameAccountID from Battle.net friends
+-- Uses pcall to safely handle API calls during loading screens
 local function lookupCharacterName(gameAccountID)
-    local numFriends = BNGetNumFriends()
-    if not numFriends or numFriends == 0 then
+    -- Safety check: Don't call BNet APIs if player isn't loaded
+    if not UnitExists("player") then
+        return nil, nil
+    end
+
+    local success, numFriends = pcall(BNGetNumFriends)
+    if not success or not numFriends or numFriends == 0 then
         return nil, nil
     end
 
     for i = 1, numFriends do
-        local numGames = C_BattleNet.GetFriendNumGameAccounts(i)
-        if numGames and numGames > 0 then
+        local success2, numGames = pcall(C_BattleNet.GetFriendNumGameAccounts, i)
+        if success2 and numGames and numGames > 0 then
             for j = 1, numGames do
-                local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
-                if gameInfo and gameInfo.gameAccountID == gameAccountID then
+                local success3, gameInfo = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
+                if success3 and gameInfo and gameInfo.gameAccountID == gameAccountID then
                     return gameInfo.characterName, gameInfo.realmName
                 end
             end

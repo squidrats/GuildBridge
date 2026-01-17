@@ -182,8 +182,9 @@ SlashCmdList["MDGANET"] = function(msg)
     elseif cmd == "traffic" then
         -- Toggle traffic debugging
         GB.enableTrafficDebug = not GB.enableTrafficDebug
+        MNetDB.enableTrafficDebug = GB.enableTrafficDebug  -- Persist across reloads
         if GB.enableTrafficDebug then
-            print("|cff00ff00MNet:|r Traffic debugging |cff00ff00ENABLED|r")
+            print("|cff00ff00MNet:|r Traffic debugging |cff00ff00ENABLED|r (persists across reloads)")
             print("  You'll see real-time traffic stats in chat. Use /mn traffic again to disable.")
             -- Reset stats when enabling
             GB.trafficStats = {
@@ -212,10 +213,24 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700Rate:|r " .. string.format("%.1f", total/elapsed) .. " msg/sec")
         print("  |cffffd700Queue:|r BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
 
+    elseif cmd == "events" then
+        -- Toggle event debugging (connection/disconnection tracking)
+        GB.enableEventDebug = not GB.enableEventDebug
+        MNetDB.enableEventDebug = GB.enableEventDebug  -- Persist across reloads
+        if GB.enableEventDebug then
+            print("|cff00ff00MNet:|r Event debugging |cff00ff00ENABLED|r (persists across reloads)")
+            print("  You'll see connection/disconnection events in chat.")
+            print("  Useful for debugging zone change disconnects.")
+            print("  Use /mn events again to disable.")
+        else
+            print("|cff00ff00MNet:|r Event debugging |cffff0000DISABLED|r")
+        end
+
     elseif cmd == "help" then
         print("|cff00ff00MNet Commands:|r")
         print("  |cffffd700/mn|r - Toggle MNet window")
         print("  |cffffd700/mn traffic|r - Toggle traffic debugging")
+        print("  |cffffd700/mn events|r - Toggle event debugging (zone change, connect/disconnect)")
         print("  |cffffd700/mn stats|r - Show traffic statistics")
         print("  |cffffd700/mn relay|r - Toggle guild chat relay (default ON)")
         print("  |cffffd700/mn relayroster|r - Toggle roster relay to guild (default ON)")

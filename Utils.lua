@@ -3,6 +3,15 @@
 
 local addonName, GB = ...
 
+-- Count entries in a table (for debugging)
+function GB:CountTable(tbl)
+    local count = 0
+    for _ in pairs(tbl) do
+        count = count + 1
+    end
+    return count
+end
+
 -- Generate a hash for message deduplication
 function GB:MakeMessageHash(guildName, originName, originRealm, messageText)
     return guildName .. "|" .. originName .. "|" .. originRealm .. "|" .. messageText
@@ -29,11 +38,37 @@ end
 -- Find all online WoW friends
 function GB:FindOnlineWoWFriends()
     local friends = {}
+    local now = GetTime()
 
-    local numFriends = BNGetNumFriends()
-    if not numFriends or numFriends == 0 then
+    -- Safety check: Don't call BNet APIs if we're not fully loaded
+    -- This prevents disconnects during loading screens
+    if not UnitExists("player") then
+        if self.enableEventDebug then
+            print("  |cff888888[FindOnlineWoWFriends]|r Skipped - player not loaded yet")
+        end
         return friends
     end
+
+    -- Global throttle: Prevent overlapping BNet API calls from multiple events
+    if now - self.lastBNetAPICall < self.BNET_API_THROTTLE then
+        if self.enableEventDebug then
+            print("  |cff888888[FindOnlineWoWFriends]|r Skipped - global throttle (" .. string.format("%.1f", now - self.lastBNetAPICall) .. "s < " .. self.BNET_API_THROTTLE .. "s)")
+        end
+        return self.onlineFriends or friends  -- Return cached list if available
+    end
+    self.lastBNetAPICall = now
+
+    -- Extra safety: Use pcall to catch any API errors during transitions
+    local success, numFriends = pcall(BNGetNumFriends)
+    if not success or not numFriends or numFriends == 0 then
+        if self.enableEventDebug then
+            print("  |cff888888[FindOnlineWoWFriends]|r BNGetNumFriends returned " .. tostring(numFriends))
+        end
+        return friends
+    end
+
+    local debugSkippedOffline = 0
+    local debugSkippedNonWoW = 0
 
     for i = 1, numFriends do
         local accountInfo = C_BattleNet.GetFriendAccountInfo(i)
@@ -42,23 +77,38 @@ function GB:FindOnlineWoWFriends()
             if numGames and numGames > 0 then
                 for j = 1, numGames do
                     local gameInfo = C_BattleNet.GetFriendGameAccountInfo(i, j)
-                    if gameInfo and gameInfo.isOnline and gameInfo.clientProgram == "WoW" then
-                        -- richPresence contains guild name like "In <Guild Name>"
-                        local guildName = nil
-                        if gameInfo.richPresence then
-                            guildName = gameInfo.richPresence:match("^In <(.+)>$")
+                    if gameInfo then
+                        if gameInfo.clientProgram == "WoW" then
+                            if gameInfo.isOnline then
+                                -- richPresence contains guild name like "In <Guild Name>"
+                                local guildName = nil
+                                if gameInfo.richPresence then
+                                    guildName = gameInfo.richPresence:match("^In <(.+)>$")
+                                end
+                                table.insert(friends, {
+                                    gameAccountID = gameInfo.gameAccountID,
+                                    characterName = gameInfo.characterName,
+                                    realmName = gameInfo.realmName,
+                                    battleTag = accountInfo.battleTag,
+                                    guildName = guildName,
+                                })
+                            else
+                                debugSkippedOffline = debugSkippedOffline + 1
+                                if self.enableEventDebug then
+                                    print("  |cffff8800[FindOnlineWoWFriends]|r " .. (gameInfo.characterName or "?") .. " isOnline=false (skipped)")
+                                end
+                            end
+                        else
+                            debugSkippedNonWoW = debugSkippedNonWoW + 1
                         end
-                        table.insert(friends, {
-                            gameAccountID = gameInfo.gameAccountID,
-                            characterName = gameInfo.characterName,
-                            realmName = gameInfo.realmName,
-                            battleTag = accountInfo.battleTag,
-                            guildName = guildName,
-                        })
                     end
                 end
             end
         end
+    end
+
+    if self.enableEventDebug then
+        print("  |cff888888[FindOnlineWoWFriends]|r Found " .. #friends .. " online WoW friends (skipped: " .. debugSkippedOffline .. " offline, " .. debugSkippedNonWoW .. " non-WoW)")
     end
 
     return friends

@@ -82,17 +82,48 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "PLAYER_LOGIN" then
-        GB:UpdateOnlineFriends()
+        -- PLAYER_ENTERING_WORLD also fires on login and handles UpdateOnlineFriends
+        -- So we skip it here to avoid duplicate BNet API calls at the same time
+        -- Just mark that we've logged in
+        if GB.enableEventDebug then
+            C_Timer.After(3, function()
+                print("|cff888888[Event]|r PLAYER_LOGIN (skipped - PLAYER_ENTERING_WORLD handles it)")
+            end)
+        end
 
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- This fires after login and after every loading screen
-        -- Good time to refresh friends and send handshake
-        GB:UpdateOnlineFriends()
+        -- IMPORTANT: Delay BNet API calls to avoid disconnect during loading screen transition
+        local isLogin, isReload = ...
+
+        -- Mark when this event fired so BN_CONNECTED can skip if we just handled it
+        GB.lastPlayerEnteringWorld = GetTime()
+
+        if GB.enableEventDebug then
+            print("|cffff8800[Event]|r PLAYER_ENTERING_WORLD isLogin=" .. tostring(isLogin) .. " isReload=" .. tostring(isReload))
+            print("  BNet connections before: " .. GB:CountTable(GB.connectedBridgeUsers))
+            print("  Whisper alts before: " .. GB:CountTable(GB.connectedWhisperAlts))
+        end
+
+        -- Delay friend list update to avoid calling BNet APIs during loading screen
+        -- This prevents potential disconnects from API calls during transition
+        -- Use 3 seconds to give loading screen plenty of time to complete
+        C_Timer.After(3, function()
+            if GB.enableEventDebug then
+                print("|cff888888[Event]|r Delayed UpdateOnlineFriends running...")
+            end
+            GB:UpdateOnlineFriends()
+        end)
 
         -- Clear stale whisper alt connections on login/reload
         -- We can't know if they're still online, so start fresh and let handshakes repopulate
+        local clearedAlts = 0
         for altName, _ in pairs(GB.connectedWhisperAlts) do
             GB.connectedWhisperAlts[altName] = nil
+            clearedAlts = clearedAlts + 1
+        end
+        if GB.enableEventDebug and clearedAlts > 0 then
+            print("  |cffff0000Cleared " .. clearedAlts .. " whisper alt connections|r")
         end
         GB:UpdateConnectionIndicators()
 
@@ -149,73 +180,160 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "BN_CONNECTED" then
-        -- Battle.net reconnected
-        GB:UpdateOnlineFriends()
-        -- CRITICAL: Use same delay as login to prevent reconnect flood (disconnects often trigger immediate BN_CONNECTED)
-        -- Throttle to prevent rapid reconnect attempts from queuing hundreds of messages
+        -- Battle.net reconnected (fires during BG entry, zone changes, etc.)
         local now = GetTime()
-        if now - GB.loginHandshakeTimestamp >= 60 then
-            GB.loginHandshakeTimestamp = now
-            C_Timer.After(5, function()
-                GB:ForceSendHandshake()
-            end)
+
+        -- Skip if PLAYER_ENTERING_WORLD fired recently (within 30 seconds)
+        -- It already handles everything we need
+        if now - GB.lastPlayerEnteringWorld < 30 then
+            if GB.enableEventDebug then
+                C_Timer.After(5, function()
+                    print("|cff888888[Event]|r BN_CONNECTED (skipped - PLAYER_ENTERING_WORLD handled it)")
+                end)
+            end
+            return
         end
+
+        -- Throttle: Only process once per 15 seconds to prevent disconnect from burst calls
+        if now - GB.lastBNConnectedTime < 15 then
+            if GB.enableEventDebug then
+                C_Timer.After(5, function()
+                    print("|cff888888[Event]|r BN_CONNECTED (throttled, skipped)")
+                end)
+            end
+            return
+        end
+        GB.lastBNConnectedTime = now
+
+        -- Space out BNet API calls: 10s for UI update, 20s for handshakes
+        -- (handshakes also call FindOnlineWoWFriends, so 10 seconds apart now)
+        C_Timer.After(10, function()
+            if GB.enableEventDebug then
+                print("|cff888888[Event]|r BN_CONNECTED delayed UpdateOnlineFriends running...")
+            end
+            GB:UpdateOnlineFriends()
+        end)
+
+        C_Timer.After(20, function()
+            if GB.enableEventDebug then
+                print("|cff888888[Event]|r BN_CONNECTED delayed ForceSendHandshake running...")
+            end
+            GB:ForceSendHandshake()
+        end)
 
     elseif event == "BN_FRIEND_INFO_CHANGED" then
         -- Debounce: This event fires VERY frequently (zone changes, level ups, etc.)
         -- Only process once every FRIEND_INFO_DEBOUNCE seconds
         local now = GetTime()
-        if now - GB.lastFriendInfoChange < GB.FRIEND_INFO_DEBOUNCE then
+
+        -- Extra safety: Don't process during first 5 seconds after login
+        -- This prevents disconnect loops from BNet API calls during startup
+        if now < 5 then
             return
         end
+
+        if now - GB.lastFriendInfoChange < GB.FRIEND_INFO_DEBOUNCE then
+            if GB.enableEventDebug and now > 10 then  -- Only debug print after 10 seconds
+                print("|cff888888[Event]|r BN_FRIEND_INFO_CHANGED (debounced, skipped)")
+            end
+            return
+        end
+
+        -- Extra safety: Don't process during loading screens
+        -- Check if we're in a loading screen by testing if player exists
+        if not UnitExists("player") then
+            if GB.enableEventDebug and now > 10 then
+                print("|cffff0000[Event]|r BN_FRIEND_INFO_CHANGED (skipped - loading screen)")
+            end
+            return
+        end
+
         GB.lastFriendInfoChange = now
 
-        -- Build set of previous friend IDs
+        if GB.enableEventDebug and now > 10 then
+            print("|cffff8800[Event]|r BN_FRIEND_INFO_CHANGED (scheduling delayed processing)")
+        end
+
+        -- Capture previous friend IDs NOW (before delay), then process after delay
         local previousFriendIDs = {}
+        local previousCount = 0
         for _, friend in ipairs(GB.onlineFriends) do
             previousFriendIDs[friend.gameAccountID] = true
+            previousCount = previousCount + 1
         end
 
-        -- Update friends list
-        GB:UpdateOnlineFriends()
+        -- Delay the actual BNet API calls to avoid disconnect during transitions
+        C_Timer.After(3, function()
+            if GB.enableEventDebug then
+                print("|cff888888[Event]|r BN_FRIEND_INFO_CHANGED delayed processing running...")
+            end
 
-        -- Build set of current friend IDs
-        local currentFriendIDs = {}
-        for _, friend in ipairs(GB.onlineFriends) do
-            currentFriendIDs[friend.gameAccountID] = true
-        end
+            -- Update friends list (this calls BNet APIs)
+            GB:UpdateOnlineFriends()
 
-        -- Remove connectedBridgeUsers entries for friends who are no longer online
-        -- Notify guildmates if we lose a cross-guild bridge connection
-        for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
-            if not currentFriendIDs[gameAccountID] then
-                -- Notify guildmates that this bridge connection was lost
-                if MNetDB.enableGuildRelay and info.guildClubId then
-                    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-                    if myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
-                        -- Send disconnection metadata to guildmates
-                        local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
-                        if GB.RelayDataToGuildmates then
-                            GB:RelayDataToGuildmates(metaPayload)
+            -- Build set of current friend IDs
+            local currentFriendIDs = {}
+            local currentCount = 0
+            for _, friend in ipairs(GB.onlineFriends) do
+                currentFriendIDs[friend.gameAccountID] = true
+                currentCount = currentCount + 1
+            end
+
+            if GB.enableEventDebug then
+                print("  Online friends: " .. previousCount .. " -> " .. currentCount)
+            end
+
+            -- Remove connectedBridgeUsers entries for friends who are no longer online
+            -- Notify guildmates if we lose a cross-guild bridge connection
+            local removedCount = 0
+            for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+                if not currentFriendIDs[gameAccountID] then
+                    if GB.enableEventDebug then
+                        print("  |cffff0000Removing bridge:|r " .. (info.characterName or "?") .. " (gameAccountID=" .. gameAccountID .. ")")
+                    end
+                    -- Notify guildmates that this bridge connection was lost
+                    if MNetDB.enableGuildRelay and info.guildClubId then
+                        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+                        if myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                            -- Send disconnection metadata to guildmates
+                            local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
+                            if GB.RelayDataToGuildmates then
+                                GB:RelayDataToGuildmates(metaPayload)
+                            end
                         end
                     end
+                    GB.connectedBridgeUsers[gameAccountID] = nil
+                    removedCount = removedCount + 1
                 end
-                GB.connectedBridgeUsers[gameAccountID] = nil
             end
-        end
-        GB:UpdateConnectionIndicators()
-        -- Clear rosters for guilds that no longer have connections
-        if GB.ClearDisconnectedRosters then
-            GB:ClearDisconnectedRosters()
-        end
 
-        -- Send handshake to any NEW friends
-        -- We send to all friends - they'll only respond if they're in an allowed guild
-        for _, friend in ipairs(GB.onlineFriends) do
-            if not previousFriendIDs[friend.gameAccountID] then
-                GB:SendHandshakeToFriend(friend.gameAccountID)
+            if GB.enableEventDebug and removedCount > 0 then
+                print("  |cffff0000Removed " .. removedCount .. " bridge connections|r")
             end
-        end
+
+            GB:UpdateConnectionIndicators()
+            -- Clear rosters for guilds that no longer have connections
+            if GB.ClearDisconnectedRosters then
+                GB:ClearDisconnectedRosters()
+            end
+
+            -- Send handshake to any NEW friends
+            -- We send to all friends - they'll only respond if they're in an allowed guild
+            local newFriendCount = 0
+            for _, friend in ipairs(GB.onlineFriends) do
+                if not previousFriendIDs[friend.gameAccountID] then
+                    if GB.enableEventDebug then
+                        print("  |cff00ff00New friend online:|r " .. (friend.characterName or friend.accountName or "?"))
+                    end
+                    GB:SendHandshakeToFriend(friend.gameAccountID)
+                    newFriendCount = newFriendCount + 1
+                end
+            end
+
+            if GB.enableEventDebug and newFriendCount > 0 then
+                print("  |cff00ff00Sent handshakes to " .. newFriendCount .. " new friends|r")
+            end
+        end)
 
     elseif event == "PLAYER_GUILD_UPDATE" then
         -- Fires when player joins or leaves a guild
