@@ -41,6 +41,13 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                         GB.guildRelayBridges[senderName] = nil
                     end
                 end
+                for guildClubIdStr, candidates in pairs(GB.relayCandidates) do
+                    for candidateName, info in pairs(candidates) do
+                        if now - info.lastSeen > GB.RELAY_CANDIDATE_TIMEOUT then
+                            candidates[candidateName] = nil
+                        end
+                    end
+                end
                 GB:UpdateConnectionIndicators()
                 if GB.CleanupStaleRosters then
                     GB:CleanupStaleRosters()
@@ -144,6 +151,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     GB:ProcessPartyUpdate(true)
                 end
             end)
+            C_Timer.After(20, function()
+                GB:AnnounceAllRelayConnections()
+                GB:StartRelayKeepalive()
+            end)
         end
 
     elseif event == "BN_CONNECTED" then
@@ -243,9 +254,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     if MNetDB.enableGuildRelay and info.guildClubId then
                         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
                         if myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                            if not GB:HasConnectionToGuild(info.guildClubId) then
+                                GB:AnnounceRelayAvailability(info.guildClubId, false)
+                            end
                             local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
                             if GB.RelayDataToGuildmates then
-                                GB:RelayDataToGuildmates(metaPayload)
+                                GB:RelayDataToGuildmates(metaPayload, info.guildClubId)
                             end
                         end
                     end
@@ -290,9 +304,10 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
                     for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
                         if info.guildClubId and myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
+                            GB:AnnounceRelayAvailability(info.guildClubId, true)
                             local metaPayload = "[GBGM]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
                             if GB.RelayDataToGuildmates then
-                                GB:RelayDataToGuildmates(metaPayload)
+                                GB:RelayDataToGuildmates(metaPayload, info.guildClubId)
                             end
                         end
                     end
@@ -317,7 +332,9 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             if channel == "WHISPER" then
                 GB:HandleWhisperAddonMessage(prefix, message, sender)
             elseif channel == "GUILD" then
-                if message:sub(1, 6) == "[GBGR]" then
+                if message:sub(1, 6) == "[GBRA]" then
+                    GB:HandleRelayCandidateMessage(message, sender)
+                elseif message:sub(1, 6) == "[GBGR]" then
                     if GB.HandleGuildRelayMessage then
                         GB:HandleGuildRelayMessage(message:sub(7), sender)
                     end
@@ -330,6 +347,8 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "PLAYER_LOGOUT" then
+        GB:WithdrawAllRelayAnnouncements()
+        GB:StopRelayKeepalive()
         GB:SendLeaveNotification()
         GB:SendWhisperLeaveNotification()
 
@@ -339,7 +358,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 if info.guildClubId and myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
                     local metaPayload = "[GBGX]" .. tostring(info.guildClubId) .. "|" .. (info.guildName or "") .. "|" .. (info.guildHomeRealm or "")
                     if GB.RelayDataToGuildmates then
-                        GB:RelayDataToGuildmates(metaPayload)
+                        GB:RelayDataToGuildmates(metaPayload, info.guildClubId)
                     end
                 end
             end

@@ -58,6 +58,9 @@ function GB:SendLeaveNotification()
     local myGuildName = GetGuildInfo("player")
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
 
+    self:WithdrawAllRelayAnnouncements()
+    self:StopRelayKeepalive()
+
     local payload = "[GBHS]LEAVE|" .. myName .. "|" .. myRealm .. "|" .. (myGuildName or "") .. "|" .. (myGuildClubId or "")
 
     for gameAccountID, _ in pairs(self.connectedBridgeUsers) do
@@ -112,7 +115,13 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         local guildName = parts[4]
         local guildClubId = parts[5]
 
+        local leavingUserGuildClubId = self.connectedBridgeUsers[senderGameAccountID] and self.connectedBridgeUsers[senderGameAccountID].guildClubId
         self.connectedBridgeUsers[senderGameAccountID] = nil
+
+        if leavingUserGuildClubId and not self:HasConnectionToGuild(leavingUserGuildClubId) then
+            self:AnnounceRelayAvailability(leavingUserGuildClubId, false)
+        end
+
         self:UpdateConnectionIndicators()
 
         if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
@@ -186,9 +195,11 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
     if MNetDB.enableGuildRelay and guildClubId then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            self:AnnounceRelayAvailability(guildClubId, true)
+
             local metaPayload = "[GBGM]" .. tostring(guildClubId) .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
             if self.RelayDataToGuildmates then
-                self:RelayDataToGuildmates(metaPayload)
+                self:RelayDataToGuildmates(metaPayload, guildClubId)
             end
         end
     end
@@ -298,7 +309,13 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         local guildName = parts[4]
         local guildClubId = parts[5]
 
+        local leavingUserGuildClubId = self.connectedWhisperAlts[senderName] and self.connectedWhisperAlts[senderName].guildClubId
         self.connectedWhisperAlts[senderName] = nil
+
+        if leavingUserGuildClubId and not self:HasConnectionToGuild(leavingUserGuildClubId) then
+            self:AnnounceRelayAvailability(leavingUserGuildClubId, false)
+        end
+
         self:UpdateConnectionIndicators()
 
         if charName and guildName and guildName ~= "" and guildClubId and guildClubId ~= "" then
@@ -363,6 +380,13 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
 
     if self.currentPage == "status" then
         self:RefreshMessages()
+    end
+
+    if MNetDB.enableGuildRelay and guildClubId then
+        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+            self:AnnounceRelayAvailability(guildClubId, true)
+        end
     end
 
     if handshakeType == "HELLO" then

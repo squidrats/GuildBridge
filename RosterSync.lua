@@ -406,9 +406,9 @@ function GB:HandleRosterFullMessage(payload, senderID, senderType)
             local guildName, guildHomeRealm = self:LookupGuildInfoByClubId(guildClubId, senderID, senderType)
             if guildName then
                 local metaPayload = "[GBGM]" .. guildClubId .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
-                self:RelayDataToGuildmates(metaPayload)
+                self:RelayDataToGuildmates(metaPayload, guildClubId)
             end
-            self:RelayDataToGuildmates("[GBRF]" .. payload)
+            self:RelayDataToGuildmates("[GBRF]" .. payload, guildClubId)
         end
     end
 
@@ -544,9 +544,9 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
             local guildName, guildHomeRealm = self:LookupGuildInfoByClubId(guildClubId, senderID, senderType)
             if guildName then
                 local metaPayload = "[GBGM]" .. guildClubId .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
-                self:RelayDataToGuildmates(metaPayload)
+                self:RelayDataToGuildmates(metaPayload, guildClubId)
             end
-            self:RelayDataToGuildmates("[GBRD]" .. payload)
+            self:RelayDataToGuildmates("[GBRD]" .. payload, guildClubId)
         end
     end
 

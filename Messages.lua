@@ -592,7 +592,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
 
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     if MNetDB.bridgeEnabled and guildClubIdPart and myGuildClubId and tostring(guildClubIdPart) ~= tostring(myGuildClubId) then
-        self:RelayToGuildmates(payload)
+        self:RelayToGuildmates(payload, guildClubIdPart)
     end
 end
 
@@ -730,7 +730,7 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
 
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     if MNetDB.bridgeEnabled and guildClubIdPart and myGuildClubId and tostring(guildClubIdPart) ~= tostring(myGuildClubId) then
-        self:RelayToGuildmates(payload)
+        self:RelayToGuildmates(payload, guildClubIdPart)
     end
 end
 
@@ -874,14 +874,25 @@ function GB:IsRecentGuildRelay(hash)
     return false
 end
 
-function GB:RelayToGuildmates(payload)
+function GB:RelayToGuildmates(payload, sourceGuildClubId)
     if not IsInGuild() then return end
 
     if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
 
+    if sourceGuildClubId and not self:AmIPrimaryRelayForGuild(sourceGuildClubId) then
+        if self.enableTrafficDebug then
+            print("|cffff8800[Relay]|r Skipping relay - not primary for guild " .. tostring(sourceGuildClubId))
+        end
+        return
+    end
+
     local hash = self:MakeMessageHash("relay", payload, "", "")
     if self:IsRecentGuildRelay(hash) then
         return
+    end
+
+    if self.enableTrafficDebug then
+        print("|cff00ff00[Relay]|r Relaying as PRIMARY for guild " .. tostring(sourceGuildClubId))
     end
 
     table.insert(self.guildRelayQueue, payload)
@@ -1076,9 +1087,16 @@ function GB:HandleGuildRelayRoster(payload, sender)
     end
 end
 
-function GB:RelayDataToGuildmates(payload)
+function GB:RelayDataToGuildmates(payload, sourceGuildClubId)
     if not IsInGuild() then return end
     if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
+
+    if sourceGuildClubId and not self:AmIPrimaryRelayForGuild(sourceGuildClubId) then
+        if self.enableTrafficDebug then
+            print("|cffff8800[Relay]|r Skipping data relay - not primary for guild " .. tostring(sourceGuildClubId))
+        end
+        return
+    end
 
     local hash = self:MakeMessageHash("data_relay", payload, "", "")
     if self:IsRecentGuildRelay(hash) then

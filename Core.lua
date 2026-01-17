@@ -52,6 +52,12 @@ GB.guildRelayQueue = {}
 GB.isProcessingGuildRelay = false
 GB.recentGuildRelays = {}
 
+GB.relayCandidates = {}
+GB.RELAY_CANDIDATE_TIMEOUT = 120
+GB.RELAY_KEEPALIVE_INTERVAL = 60
+GB.lastRelayAnnounceTime = {}
+GB.relayKeepaliveTimer = nil
+
 GB.trafficStats = {
     bnet = 0,
     whisper = 0,
@@ -292,6 +298,197 @@ function GB:ProcessQueue()
     end
 
     processNext()
+end
+
+function GB:GetMyFullName()
+    local name = UnitName("player")
+    local realm = GetRealmName()
+    return name .. "-" .. realm
+end
+
+function GB:HasConnectionToGuild(guildClubId)
+    if not guildClubId then return false end
+    local guildClubIdStr = tostring(guildClubId)
+
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        if info.guildClubId and tostring(info.guildClubId) == guildClubIdStr then
+            local now = GetTime()
+            if now - info.lastSeen < 300 then
+                return true
+            end
+        end
+    end
+
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if info.guildClubId and tostring(info.guildClubId) == guildClubIdStr then
+            local now = GetTime()
+            if now - info.lastSeen < 300 then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+function GB:GetConnectedGuildClubIds()
+    local guildIds = {}
+    local now = GetTime()
+
+    for gameAccountID, info in pairs(self.connectedBridgeUsers) do
+        if info.guildClubId and now - info.lastSeen < 300 then
+            guildIds[tostring(info.guildClubId)] = true
+        end
+    end
+
+    for altName, info in pairs(self.connectedWhisperAlts) do
+        if info.guildClubId and now - info.lastSeen < 300 then
+            guildIds[tostring(info.guildClubId)] = true
+        end
+    end
+
+    return guildIds
+end
+
+function GB:AmIPrimaryRelayForGuild(guildClubId)
+    if not guildClubId then return false end
+    if not MNetDB.enableGuildRelay then return false end
+    if not self:HasConnectionToGuild(guildClubId) then return false end
+
+    local guildClubIdStr = tostring(guildClubId)
+    local myFullName = self:GetMyFullName()
+    local now = GetTime()
+
+    local candidates = {}
+
+    table.insert(candidates, myFullName)
+
+    local guildCandidates = self.relayCandidates[guildClubIdStr]
+    if guildCandidates then
+        for candidateName, info in pairs(guildCandidates) do
+            if candidateName ~= myFullName and now - info.lastSeen < self.RELAY_CANDIDATE_TIMEOUT then
+                table.insert(candidates, candidateName)
+            end
+        end
+    end
+
+    table.sort(candidates)
+
+    local isPrimary = candidates[1] == myFullName
+
+    if self.enableTrafficDebug then
+        print("|cff00ffff[Relay Election]|r Guild " .. guildClubIdStr .. ": " .. #candidates .. " candidates, primary=" .. candidates[1] .. ", me=" .. myFullName .. ", isPrimary=" .. tostring(isPrimary))
+    end
+
+    return isPrimary
+end
+
+function GB:TrackRelayCandidate(sender, guildClubId, isAvailable)
+    if not sender or not guildClubId then return end
+
+    local guildClubIdStr = tostring(guildClubId)
+    local myFullName = self:GetMyFullName()
+
+    local senderFullName = sender
+    if not sender:find("-") then
+        senderFullName = sender .. "-" .. GetRealmName()
+    end
+
+    if senderFullName == myFullName then return end
+
+    if isAvailable then
+        if not self.relayCandidates[guildClubIdStr] then
+            self.relayCandidates[guildClubIdStr] = {}
+        end
+        self.relayCandidates[guildClubIdStr][senderFullName] = {
+            lastSeen = GetTime(),
+        }
+        if self.enableTrafficDebug then
+            print("|cff00ffff[Relay]|r " .. senderFullName .. " announced as relay candidate for guild " .. guildClubIdStr)
+        end
+    else
+        if self.relayCandidates[guildClubIdStr] then
+            self.relayCandidates[guildClubIdStr][senderFullName] = nil
+            if self.enableTrafficDebug then
+                print("|cff00ffff[Relay]|r " .. senderFullName .. " removed as relay candidate for guild " .. guildClubIdStr)
+            end
+        end
+    end
+end
+
+function GB:AnnounceRelayAvailability(guildClubId, isAvailable)
+    if not IsInGuild() then return end
+    if not guildClubId then return end
+
+    local guildClubIdStr = tostring(guildClubId)
+    local flag = isAvailable and "1" or "0"
+    local message = "[GBRA]" .. guildClubIdStr .. "|" .. flag
+
+    C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, message, "GUILD")
+
+    if self.enableTrafficDebug then
+        print("|cff00ffff[Relay]|r Announced availability=" .. flag .. " for guild " .. guildClubIdStr)
+    end
+end
+
+function GB:AnnounceAllRelayConnections()
+    if not IsInGuild() then return end
+    if not MNetDB.enableGuildRelay then return end
+
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local connectedGuilds = self:GetConnectedGuildClubIds()
+
+    for guildClubIdStr, _ in pairs(connectedGuilds) do
+        if not myGuildClubId or guildClubIdStr ~= tostring(myGuildClubId) then
+            self:AnnounceRelayAvailability(guildClubIdStr, true)
+        end
+    end
+end
+
+function GB:WithdrawAllRelayAnnouncements()
+    if not IsInGuild() then return end
+
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local connectedGuilds = self:GetConnectedGuildClubIds()
+
+    for guildClubIdStr, _ in pairs(connectedGuilds) do
+        if not myGuildClubId or guildClubIdStr ~= tostring(myGuildClubId) then
+            self:AnnounceRelayAvailability(guildClubIdStr, false)
+        end
+    end
+end
+
+function GB:StartRelayKeepalive()
+    if self.relayKeepaliveTimer then return end
+
+    self.relayKeepaliveTimer = C_Timer.NewTicker(self.RELAY_KEEPALIVE_INTERVAL, function()
+        if MNetDB.enableGuildRelay then
+            GB:AnnounceAllRelayConnections()
+        end
+    end)
+end
+
+function GB:StopRelayKeepalive()
+    if self.relayKeepaliveTimer then
+        self.relayKeepaliveTimer:Cancel()
+        self.relayKeepaliveTimer = nil
+    end
+end
+
+function GB:HandleRelayCandidateMessage(message, sender)
+    if not message or message:sub(1, 6) ~= "[GBRA]" then
+        return false
+    end
+
+    local data = message:sub(7)
+    local guildClubId, flag = data:match("([^|]+)|([01])")
+
+    if not guildClubId or not flag then return true end
+
+    local isAvailable = flag == "1"
+    self:TrackRelayCandidate(sender, guildClubId, isAvailable)
+
+    return true
 end
 
 SLASH_MNDEBUG1 = "/mndebug"

@@ -203,6 +203,57 @@ SlashCmdList["MDGANET"] = function(msg)
             print("|cff00ff00MNet:|r Event debugging |cffff0000DISABLED|r")
         end
 
+    elseif cmd == "relaystatus" or cmd == "rs" then
+        print("|cff00ff00MNet Relay Status:|r")
+        local myFullName = GB:GetMyFullName()
+        print("  My name: |cffffd700" .. myFullName .. "|r")
+        print("  Guild relay enabled: " .. (MNetDB.enableGuildRelay and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+
+        local connectedGuilds = GB:GetConnectedGuildClubIds()
+        local guildCount = 0
+        for _ in pairs(connectedGuilds) do guildCount = guildCount + 1 end
+
+        if guildCount == 0 then
+            print("  |cff888888No connections to other guilds|r")
+        else
+            print("  |cffffd700Connected to " .. guildCount .. " other guild(s):|r")
+            local now = GetTime()
+            for guildClubIdStr, _ in pairs(connectedGuilds) do
+                local isPrimary = GB:AmIPrimaryRelayForGuild(guildClubIdStr)
+                local guildName = "Unknown"
+                for filterKey, info in pairs(GB.knownGuilds) do
+                    if info.guildClubId and tostring(info.guildClubId) == guildClubIdStr then
+                        guildName = info.guildName or "Unknown"
+                        break
+                    end
+                end
+
+                local candidates = {}
+                table.insert(candidates, myFullName)
+                local guildCandidates = GB.relayCandidates[guildClubIdStr]
+                if guildCandidates then
+                    for candidateName, info in pairs(guildCandidates) do
+                        if candidateName ~= myFullName and now - info.lastSeen < GB.RELAY_CANDIDATE_TIMEOUT then
+                            table.insert(candidates, candidateName)
+                        end
+                    end
+                end
+                table.sort(candidates)
+
+                local statusColor = isPrimary and "|cff00ff00" or "|cffff8800"
+                local statusText = isPrimary and "PRIMARY" or "STANDBY"
+                print("    [" .. guildName .. "] " .. statusColor .. statusText .. "|r (" .. #candidates .. " candidates)")
+
+                if #candidates > 1 then
+                    for i, name in ipairs(candidates) do
+                        local marker = (i == 1) and " <- primary" or ""
+                        local meMarker = (name == myFullName) and " (me)" or ""
+                        print("      " .. i .. ". " .. name .. meMarker .. marker)
+                    end
+                end
+            end
+        end
+
     elseif cmd == "help" then
         print("|cff00ff00MNet Commands:|r")
         print("  |cffffd700/mn|r - Toggle MNet window")
@@ -211,6 +262,7 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700/mn stats|r - Show traffic statistics")
         print("  |cffffd700/mn relay|r - Toggle guild chat relay (default ON)")
         print("  |cffffd700/mn relayroster|r - Toggle roster relay to guild (default ON)")
+        print("  |cffffd700/mn relaystatus|r - Show relay election status")
         print("  |cffffd700/mn alt <Name-Realm>|r - Register a same-account alt")
         print("  |cffffd700/mn removealt <Name-Realm>|r - Remove a registered alt")
         print("  |cffffd700/mn alts|r - List registered alts")
