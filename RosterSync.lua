@@ -403,6 +403,8 @@ function GB:HandleRosterFullMessage(payload, senderID, senderType)
 
     if not version or not guildClubId then return end
 
+    if not self:IsAllowedGuildId(guildClubId) then return end
+
     if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
@@ -540,6 +542,8 @@ end
 function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     local version, guildClubId, changes = payload:match("([^|]+)|([^|]+)|(.+)")
     if not version or not guildClubId or not changes then return end
+
+    if not self:IsAllowedGuildId(guildClubId) then return end
 
     if senderType ~= "guild" and self.RelayDataToGuildmates and MNetDB.relayRosterToGuild then
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()

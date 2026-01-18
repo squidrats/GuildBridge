@@ -354,7 +354,7 @@ function GB:SendFromUI(messageText)
         table.remove(self.messageHistory, 1)
     end
 
-    if self.scrollFrame then
+    if self.scrollFrame and self.currentPage == "chat" then
         if self.currentFilter == nil or displayFilterKey == self.currentFilter or showInAllTabs then
             local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
             self.scrollFrame:AddMessage(displayMsg)
@@ -444,7 +444,7 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
         table.remove(self.messageHistory, 1)
     end
 
-    if self.scrollFrame and (self.currentFilter == nil or filterKey == self.currentFilter) then
+    if self.scrollFrame and self.currentPage == "chat" and (self.currentFilter == nil or filterKey == self.currentFilter) then
         local displayMsg = self.currentFilter and formattedNoTag or formattedWithTag
         self.scrollFrame:AddMessage(displayMsg)
     end
@@ -855,15 +855,25 @@ function GB:RefreshMessages()
             self.scrollFrame:AddMessage("")
 
             self.scrollFrame:AddMessage("|cffffd700Connections:|r")
+            local myName = UnitName("player")
             for _, conn in ipairs(connections) do
                 local connIndicator = ""
+                local yourSide = myName
+                local theirSide = conn.charName
+
                 if conn.connectionType == "whisper" then
                     connIndicator = " |cffaaaaaa(alt)|r"
                 elseif conn.connectionType == "guild-relay" then
                     connIndicator = " |cffaaaaaa(relay)|r"
+                    yourSide = conn.charName
+                    theirSide = nil
                 end
 
-                self.scrollFrame:AddMessage("  |cff00ff00" .. myMDGAName .. "|r <-> |cffffd700" .. conn.guildShort .. "|r via |cff88ffff" .. conn.charName .. "|r" .. connIndicator)
+                if theirSide then
+                    self.scrollFrame:AddMessage("  |cff88ffff" .. yourSide .. "|r |cff888888(" .. myMDGAName .. ")|r <-> |cff88ffff" .. theirSide .. "|r |cff888888(" .. conn.guildShort .. ")|r" .. connIndicator)
+                else
+                    self.scrollFrame:AddMessage("  |cff88ffff" .. yourSide .. "|r |cff888888(" .. myMDGAName .. ")|r -> |cffffd700" .. conn.guildShort .. "|r" .. connIndicator)
+                end
             end
         end
 
@@ -1075,7 +1085,7 @@ function GB:HandleGuildRelayRoster(payload, sender)
 
     if msgType == "[GBGM]" then
         local guildClubId, guildName, guildHomeRealm = msgData:match("([^|]+)|([^|]+)|([^|]*)")
-        if guildClubId and guildName then
+        if guildClubId and guildName and self:IsAllowedGuildId(guildClubId) then
             guildHomeRealm = guildHomeRealm ~= "" and guildHomeRealm or nil
             guildClubId = tonumber(guildClubId) or guildClubId
             self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
@@ -1084,7 +1094,7 @@ function GB:HandleGuildRelayRoster(payload, sender)
         end
     elseif msgType == "[GBGX]" then
         local guildClubId = msgData:match("([^|]+)")
-        if guildClubId then
+        if guildClubId and self:IsAllowedGuildId(guildClubId) then
             guildClubId = tonumber(guildClubId) or guildClubId
             if self.guildRelayBridges[sender] and self.guildRelayBridges[sender].guilds then
                 self.guildRelayBridges[sender].guilds[tostring(guildClubId)] = nil
@@ -1104,18 +1114,18 @@ function GB:HandleGuildRelayRoster(payload, sender)
         end
     elseif msgType == "[GBRF]" and self.HandleRosterFullMessage then
         local _, guildClubId = msgData:match("([^|]+)|([^|]+)")
-        if guildClubId then
+        if guildClubId and self:IsAllowedGuildId(guildClubId) then
             guildClubId = tonumber(guildClubId) or guildClubId
             self:TrackGuildRelayBridge(sender, guildClubId)
+            self:HandleRosterFullMessage(msgData, sender, "guild")
         end
-        self:HandleRosterFullMessage(msgData, sender, "guild")
     elseif msgType == "[GBRD]" and self.HandleRosterDeltaMessage then
         local _, guildClubId = msgData:match("([^|]+)|([^|]+)")
-        if guildClubId then
+        if guildClubId and self:IsAllowedGuildId(guildClubId) then
             guildClubId = tonumber(guildClubId) or guildClubId
             self:TrackGuildRelayBridge(sender, guildClubId)
+            self:HandleRosterDeltaMessage(msgData, sender, "guild")
         end
-        self:HandleRosterDeltaMessage(msgData, sender, "guild")
     elseif msgType == "[GBPY]" then
     end
 end
