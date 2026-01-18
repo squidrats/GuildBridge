@@ -21,7 +21,7 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
         return
     end
 
-    if not guildClubId or not GB:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not GB:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return
     end
 
@@ -182,7 +182,7 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
 
     if guildClubId == "" then guildClubId = nil end
 
-    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not self:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return true
     end
 
@@ -258,7 +258,7 @@ function GB:SendHandshakeToFriend(gameAccountID)
     local guildHomeRealm = self:GetGuildHomeRealm()
     local guildClubId = getGuildClubId()
 
-    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not self:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return
     end
 
@@ -280,7 +280,7 @@ local function doSendWhisperHandshake(handshakeType, targetName)
         return
     end
 
-    if not guildClubId or not GB:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not GB:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return
     end
 
@@ -380,7 +380,7 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
 
     if guildClubId == "" then guildClubId = nil end
 
-    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not self:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return true
     end
 
@@ -441,7 +441,7 @@ function GB:UpdateConnectionFromMessage(senderGameAccountID, guildName, guildHom
         return
     end
 
-    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
+    if not guildClubId or not self:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm) then
         return
     end
 

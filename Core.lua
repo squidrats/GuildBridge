@@ -127,6 +127,17 @@ function GB:IsAllowedGuildId(guildClubId)
     return self.allowedGuildIds[tostring(guildClubId)] ~= nil
 end
 
+function GB:IsAllowedGuildIdAndRealm(guildClubId, guildHomeRealm)
+    if not guildClubId then return false end
+    local info = self.allowedGuildIds[tostring(guildClubId)]
+    if not info then return false end
+    if not guildHomeRealm then return false end
+    -- Normalize realm names (remove spaces, handle connected realms)
+    local normalizedRealm = guildHomeRealm:gsub("%s+", "")
+    local expectedRealm = info.realm:gsub("%s+", "")
+    return normalizedRealm == expectedRealm
+end
+
 GB.allowedGuilds = {
     ["MAKE DUROTAR GREAT AGAIN"] = true,
 }
