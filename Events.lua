@@ -93,6 +93,13 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             print("  Whisper alts before: " .. GB:CountTable(GB.connectedWhisperAlts))
         end
 
+        if not isLogin and not isReload then
+            if GB.enableEventDebug then
+                print("  |cff888888Zone change only - skipping cascade|r")
+            end
+            return
+        end
+
         C_Timer.After(3, function()
             if GB.enableEventDebug then
                 print("|cff888888[Event]|r Delayed UpdateOnlineFriends running...")
@@ -110,7 +117,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         GB:UpdateConnectionIndicators()
 
-        C_Timer.After(1, function()
+        C_Timer.After(2, function()
             if IsInGuild() then
                 local myGuildName = GetGuildInfo("player")
                 local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
@@ -128,30 +135,30 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         if timeSinceLastLogin >= 60 then
             GB.loginHandshakeTimestamp = now
 
-            C_Timer.After(2, function()
+            C_Timer.After(5, function()
                 if C_GuildInfo and C_GuildInfo.GuildRoster then
                     C_GuildInfo.GuildRoster()
                 elseif GuildRoster then
                     GuildRoster()
                 end
             end)
-            C_Timer.After(3, function()
+            C_Timer.After(8, function()
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
             end)
-            C_Timer.After(5, function()
+            C_Timer.After(15, function()
                 GB:ForceSendHandshake()
             end)
-            C_Timer.After(10, function()
+            C_Timer.After(25, function()
                 GB:ForceSendWhisperHandshake()
             end)
-            C_Timer.After(15, function()
+            C_Timer.After(35, function()
                 if GB.ProcessPartyUpdate then
                     GB:ProcessPartyUpdate(true)
                 end
             end)
-            C_Timer.After(20, function()
+            C_Timer.After(45, function()
                 GB:AnnounceAllRelayConnections()
                 GB:StartRelayKeepalive()
             end)
