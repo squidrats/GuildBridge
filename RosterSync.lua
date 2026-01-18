@@ -157,13 +157,13 @@ function GB:SendFullRoster(targetGameAccountID, targetType)
     if not IsInGuild() then return end
 
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then return end
+    if not myGuildName then return end
+
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if not myGuildClubId or not self:IsAllowedGuildId(myGuildClubId) then return end
 
     local filterKey = self:GetMyGuildFilterKey()
     if not filterKey then return end
-
-    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-    if not myGuildClubId then return end
 
     local members = self:GetOnlineGuildMembers()
 
@@ -257,13 +257,13 @@ local function doSendRosterDeltas()
     if not IsInGuild() then return end
 
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not GB.allowedGuilds[myGuildName] then return end
+    if not myGuildName then return end
+
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if not myGuildClubId or not GB:IsAllowedGuildId(myGuildClubId) then return end
 
     local filterKey = GB:GetMyGuildFilterKey()
     if not filterKey then return end
-
-    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-    if not myGuildClubId then return end
 
     local roster = GB.guildRosters[filterKey]
     if not roster then return end
@@ -337,7 +337,10 @@ function GB:ProcessGuildRosterUpdate()
     if not IsInGuild() then return end
 
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then return end
+    if not myGuildName then return end
+
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if not myGuildClubId or not self:IsAllowedGuildId(myGuildClubId) then return end
 
     local filterKey = self:GetMyGuildFilterKey()
     if not filterKey then return end

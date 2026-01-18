@@ -180,7 +180,7 @@ function GB:RefreshRoster()
         end
     end
 
-    if myGuildName and self.allowedGuilds[myGuildName] then
+    if myGuildName and myGuildClubId and self:IsAllowedGuildId(myGuildClubId) then
         local playerName = UnitName("player")
         local playerRealm = GetRealmName()
         local _, _, _, _, _, _, _, _, _, _, playerClass = GetPlayerInfoByGUID(UnitGUID("player"))
@@ -2048,31 +2048,24 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, string.format("  Whisper Alts: %d", altCount))
     table.insert(lines, "")
 
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myMDGAName = self:GetMDGAName(myGuildClubId) or "Unknown"
+
     if bnetCount > 0 then
-        table.insert(lines, "|cffffd700BNET BRIDGE USERS|r")
+        table.insert(lines, "|cffffd700BNET BRIDGE CONNECTIONS|r")
         for gameAccountID, info in pairs(self.connectedBridgeUsers) do
             local charName = info.characterName or "Unknown"
-            local guildName = info.guildName or "Unknown"
-            local realm = info.guildHomeRealm or ""
-            local guildDisplay = guildName
-            if realm and realm ~= "" then
-                guildDisplay = guildName .. "-" .. realm
-            end
-            table.insert(lines, string.format("  %s in <%s>", charName, guildDisplay))
+            local theirMDGAName = self:GetMDGAName(info.guildClubId) or info.guildName or "Unknown"
+            table.insert(lines, string.format("  %s <-> %s via %s", myMDGAName, theirMDGAName, charName))
         end
         table.insert(lines, "")
     end
 
     if altCount > 0 then
-        table.insert(lines, "|cffffd700WHISPER ALT BRIDGES|r")
+        table.insert(lines, "|cffffd700WHISPER ALT CONNECTIONS|r")
         for altName, info in pairs(self.connectedWhisperAlts) do
-            local guildName = info.guildName or "Unknown"
-            local realm = info.guildHomeRealm or ""
-            local guildDisplay = guildName
-            if realm and realm ~= "" then
-                guildDisplay = guildName .. "-" .. realm
-            end
-            table.insert(lines, string.format("  %s in <%s>", altName, guildDisplay))
+            local theirMDGAName = self:GetMDGAName(info.guildClubId) or info.guildName or "Unknown"
+            table.insert(lines, string.format("  %s <-> %s via %s", myMDGAName, theirMDGAName, altName))
         end
         table.insert(lines, "")
     end
@@ -2087,14 +2080,16 @@ function GB:UpdateDebugDisplay()
         for senderName, info in pairs(self.guildRelayBridges) do
             local guildsList = {}
             for guildClubId, _ in pairs(info.guilds) do
-                local guildName = "Unknown"
-                for filterKey, guildInfo in pairs(self.knownGuilds) do
-                    if tostring(guildInfo.guildClubId) == tostring(guildClubId) then
-                        guildName = guildInfo.guildName or "Unknown"
-                        break
+                local mdgaName = self:GetMDGAName(guildClubId)
+                if not mdgaName then
+                    for filterKey, guildInfo in pairs(self.knownGuilds) do
+                        if tostring(guildInfo.guildClubId) == tostring(guildClubId) then
+                            mdgaName = guildInfo.guildName or "Unknown"
+                            break
+                        end
                     end
                 end
-                table.insert(guildsList, guildName)
+                table.insert(guildsList, mdgaName or "Unknown")
             end
             local guildsStr = table.concat(guildsList, ", ")
             table.insert(lines, string.format("  %s relaying <%s>", senderName, guildsStr))

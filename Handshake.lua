@@ -9,7 +9,7 @@ end
 
 local function doSendHandshake(handshakeType, targetGameAccountID)
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not GB.allowedGuilds[myGuildName] then
+    if not myGuildName then
         return
     end
 
@@ -18,6 +18,10 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
     local guildClubId = getGuildClubId()
 
     if not guildHomeRealm then
+        return
+    end
+
+    if not guildClubId or not GB:IsAllowedGuildId(guildClubId) then
         return
     end
 
@@ -84,11 +88,6 @@ function GB:SendLeaveNotification()
 end
 
 function GB:SendHandshakeMessage(handshakeType, targetGameAccountID)
-    local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then
-        return
-    end
-
     doSendHandshake(handshakeType, targetGameAccountID)
 end
 
@@ -181,11 +180,11 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         return true
     end
 
-    if not self.allowedGuilds[guildName] then
+    if guildClubId == "" then guildClubId = nil end
+
+    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
         return true
     end
-
-    if guildClubId == "" then guildClubId = nil end
 
     local charName, charRealm = lookupCharacterName(senderGameAccountID)
 
@@ -251,7 +250,7 @@ end
 
 function GB:SendHandshakeToFriend(gameAccountID)
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then
+    if not myGuildName then
         return
     end
 
@@ -259,13 +258,17 @@ function GB:SendHandshakeToFriend(gameAccountID)
     local guildHomeRealm = self:GetGuildHomeRealm()
     local guildClubId = getGuildClubId()
 
+    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
+        return
+    end
+
     local payload = "[GBHS]HELLO|" .. myGuildName .. "|" .. myRealm .. "|" .. guildHomeRealm .. "|" .. (guildClubId or "")
     self:QueueBNetMessage(gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
 end
 
 local function doSendWhisperHandshake(handshakeType, targetName)
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not GB.allowedGuilds[myGuildName] then
+    if not myGuildName then
         return
     end
 
@@ -274,6 +277,10 @@ local function doSendWhisperHandshake(handshakeType, targetName)
     local guildClubId = getGuildClubId()
 
     if not guildHomeRealm then
+        return
+    end
+
+    if not guildClubId or not GB:IsAllowedGuildId(guildClubId) then
         return
     end
 
@@ -303,10 +310,6 @@ function GB:ForceSendWhisperHandshake()
 end
 
 function GB:SendWhisperHandshakeToAlt(altName)
-    local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then
-        return
-    end
     doSendWhisperHandshake("HELLO", altName)
 end
 
@@ -375,11 +378,11 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         return true
     end
 
-    if not self.allowedGuilds[guildName] then
+    if guildClubId == "" then guildClubId = nil end
+
+    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
         return true
     end
-
-    if guildClubId == "" then guildClubId = nil end
 
     self.connectedWhisperAlts[senderName] = {
         guildName = guildName,
@@ -438,7 +441,7 @@ function GB:UpdateConnectionFromMessage(senderGameAccountID, guildName, guildHom
         return
     end
 
-    if not self.allowedGuilds[guildName] then
+    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
         return
     end
 

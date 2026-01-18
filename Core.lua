@@ -93,6 +93,12 @@ GB.guildNumbers = {
     ["MAKE DUROTAR GREAT AGAIN-Thrall"] = 2,
 }
 
+GB.allowedGuildIds = {
+    ["490681231"] = { name = "MDGA 1", realm = "Tichondrius" },
+    ["494845151"] = { name = "MDGA 2", realm = "Thrall" },
+    ["496284011"] = { name = "MDGA 3", realm = "Illidan" },
+}
+
 function GB:HasElvUI()
     return ElvUI ~= nil
 end
@@ -101,6 +107,20 @@ function GB:GetGuildNumber(guildName, guildHomeRealm)
     if not guildName then return nil end
     local key = guildName .. "-" .. (guildHomeRealm or "")
     return self.guildNumbers[key]
+end
+
+function GB:GetMDGAName(guildClubId)
+    if not guildClubId then return nil end
+    local info = self.allowedGuildIds[tostring(guildClubId)]
+    if info then
+        return info.name
+    end
+    return nil
+end
+
+function GB:IsAllowedGuildId(guildClubId)
+    if not guildClubId then return false end
+    return self.allowedGuildIds[tostring(guildClubId)] ~= nil
 end
 
 GB.allowedGuilds = {
@@ -501,8 +521,9 @@ SlashCmdList["MNDEBUG"] = function()
 
     local myGuildName = GetGuildInfo("player")
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myMDGAName = GB:GetMDGAName(myGuildClubId) or "Not MDGA"
     print("My guild: " .. (myGuildName or "nil") .. " (clubId: " .. tostring(myGuildClubId) .. ")")
-    print("In allowedGuilds: " .. tostring(myGuildName and GB.allowedGuilds[myGuildName] or false))
+    print("MDGA: " .. myMDGAName .. " | Allowed by ID: " .. tostring(GB:IsAllowedGuildId(myGuildClubId)))
 
     local friends = GB:FindOnlineWoWFriends()
     print("Online WoW friends: " .. #friends)

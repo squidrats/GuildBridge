@@ -122,7 +122,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 local myGuildName = GetGuildInfo("player")
                 local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
                 local myGuildHomeRealm = GB:GetGuildHomeRealm()
-                if myGuildName and GB.allowedGuilds[myGuildName] and myGuildClubId then
+                if myGuildName and myGuildClubId and GB:IsAllowedGuildId(myGuildClubId) then
                     GB:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
                     GB:RebuildTabs()
                 end
@@ -303,12 +303,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_GUILD_UPDATE" then
         C_Timer.After(0.5, function()
             local guildName = GetGuildInfo("player")
-            if guildName and GB.allowedGuilds[guildName] then
+            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+            if guildName and myGuildClubId and GB:IsAllowedGuildId(myGuildClubId) then
                 GB:ForceSendHandshake()
                 GB:ForceSendWhisperHandshake()
 
                 if MNetDB.enableGuildRelay then
-                    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
                     for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
                         if info.guildClubId and myGuildClubId and tostring(myGuildClubId) ~= tostring(info.guildClubId) then
                             GB:AnnounceRelayAvailability(info.guildClubId, true)

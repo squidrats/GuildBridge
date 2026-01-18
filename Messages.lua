@@ -156,7 +156,7 @@ function GB:AddBridgeMessage(senderName, guildName, factionTag, messageText, sen
     if displayInTargetTab then
         showInNativeChat = myFilterKey and displayInTargetTab == myFilterKey
     else
-        showInNativeChat = myGuildName and self.allowedGuilds[myGuildName]
+        showInNativeChat = myGuildName and myGuildClubId and self:IsAllowedGuildId(myGuildClubId)
     end
 
     if showInNativeChat then
@@ -229,23 +229,17 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
     local myGuildName = GetGuildInfo("player")
 
     for _, friend in ipairs(self.onlineFriends) do
-        local shouldSend = false
         local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
 
-        if connInfo then
-            shouldSend = true
+        if connInfo and connInfo.guildClubId and self:IsAllowedGuildId(connInfo.guildClubId) then
+            local shouldSend = true
             if sourceType == "G" and myGuildClubId and connInfo.guildClubId == myGuildClubId then
                 shouldSend = false
             end
-        elseif friend.guildName and self.allowedGuilds[friend.guildName] then
-            shouldSend = true
-            if sourceType == "G" and friend.guildName == myGuildName then
-                shouldSend = false
-            end
-        end
 
-        if shouldSend then
-            self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+            if shouldSend then
+                self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
+            end
         end
     end
 end
@@ -280,7 +274,7 @@ function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourc
 
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 and altName ~= excludeSender then
-            if not info.guildName or not self.allowedGuilds[info.guildName] then
+            if not info.guildClubId or not self:IsAllowedGuildId(info.guildClubId) then
             else
                 local shouldSend = true
                 if sourceType == "G" and myGuildClubId and info.guildClubId == myGuildClubId then
@@ -300,12 +294,12 @@ function GB:SendFromUI(messageText)
     end
 
     local playerGuildName = GetGuildInfo("player")
-    if not playerGuildName or not self.allowedGuilds[playerGuildName] then
+    if not playerGuildName then
         return
     end
 
     local guildClubId = getGuildClubId()
-    if not guildClubId then
+    if not guildClubId or not self:IsAllowedGuildId(guildClubId) then
         return
     end
 
@@ -383,7 +377,12 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     end
 
     local myGuildName = GetGuildInfo("player")
-    if not myGuildName or not self.allowedGuilds[myGuildName] then
+    if not myGuildName then
+        return
+    end
+
+    local myGuildClubId = getGuildClubId()
+    if not myGuildClubId or not self:IsAllowedGuildId(myGuildClubId) then
         return
     end
 
@@ -400,7 +399,6 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     end
 
     local myGuildHomeRealm = self:GetGuildHomeRealm() or originRealm
-    local myGuildClubId = getGuildClubId()
 
     local filterKey = self:RegisterGuild(myGuildName, myGuildHomeRealm, myGuildClubId)
 
@@ -557,7 +555,7 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         guildHomeRealmPart = guildRealmPart
     end
 
-    if guildPart and not self.allowedGuilds[guildPart] then
+    if not guildClubIdPart or not self:IsAllowedGuildId(guildClubIdPart) then
         return
     end
 
@@ -605,10 +603,9 @@ function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilte
 
     for _, friend in ipairs(self.onlineFriends) do
         local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
-        local friendGuildName = connInfo and connInfo.guildName or friend.guildName
-
-        if friendGuildName and friendGuildName ~= originGuild then
-            if connInfo or (friend.guildName and self.allowedGuilds[friend.guildName]) then
+        if connInfo and connInfo.guildClubId and self:IsAllowedGuildId(connInfo.guildClubId) then
+            local friendGuildName = connInfo.guildName
+            if friendGuildName and friendGuildName ~= originGuild then
                 self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
             end
         end
@@ -617,7 +614,7 @@ function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilte
     local now = GetTime()
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 then
-            if info.guildName and info.guildName ~= originGuild and self.allowedGuilds[info.guildName] then
+            if info.guildClubId and self:IsAllowedGuildId(info.guildClubId) and info.guildName ~= originGuild then
                 self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
             end
         end
@@ -693,7 +690,7 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
         guildHomeRealmPart = guildRealmPart
     end
 
-    if guildPart and not self.allowedGuilds[guildPart] then
+    if not guildClubIdPart or not self:IsAllowedGuildId(guildClubIdPart) then
         return
     end
 
@@ -743,10 +740,10 @@ function GB:RefreshMessages()
         local myGuildName = GetGuildInfo("player")
         local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
         local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
-        local myShort = self.guildShortNames[myGuildName] or myGuildName or "No Guild"
+        local myMDGAName = self:GetMDGAName(myGuildClubId) or self.guildShortNames[myGuildName] or myGuildName or "No Guild"
         local now = GetTime()
 
-        self.scrollFrame:AddMessage("|cffffd700My Guild:|r " .. (myGuildName or "None") .. " |cff888888(ID: " .. tostring(myGuildClubId or "nil") .. ")|r")
+        self.scrollFrame:AddMessage("|cffffd700My Guild:|r " .. myMDGAName .. " |cff888888(" .. (myGuildName or "None") .. ")|r")
         self.scrollFrame:AddMessage("")
 
         local connections = {}
@@ -766,12 +763,12 @@ function GB:RefreshMessages()
             else
                 local charName = info.characterName or "Unknown"
                 local charRealm = info.characterRealm or info.realmName or ""
-                local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
+                local theirMDGA = self:GetMDGAName(info.guildClubId) or self.guildShortNames[info.guildName] or info.guildName or ""
                 table.insert(connections, {
                     charName = charName,
                     charRealm = charRealm,
                     guildName = info.guildName,
-                    guildShort = theirShort,
+                    guildShort = theirMDGA,
                     guildHomeRealm = info.guildHomeRealm or info.realmName or "",
                     guildClubId = info.guildClubId,
                     connectionType = "bnet",
@@ -791,12 +788,12 @@ function GB:RefreshMessages()
                     local charName, charRealm = altName:match("([^%-]+)%-?(.*)")
                     charName = charName or altName
                     charRealm = charRealm or info.realmName or ""
-                    local theirShort = self.guildShortNames[info.guildName] or info.guildName or ""
+                    local theirMDGA = self:GetMDGAName(info.guildClubId) or self.guildShortNames[info.guildName] or info.guildName or ""
                     table.insert(connections, {
                         charName = charName,
                         charRealm = charRealm,
                         guildName = info.guildName,
-                        guildShort = theirShort,
+                        guildShort = theirMDGA,
                         guildHomeRealm = info.guildHomeRealm or info.realmName or "",
                         guildClubId = info.guildClubId,
                         connectionType = "whisper",
@@ -820,12 +817,12 @@ function GB:RefreshMessages()
                             local charName, charRealm = senderName:match("([^%-]+)%-?(.*)")
                             charName = charName or senderName
                             charRealm = charRealm ~= "" and charRealm or ""
-                            local theirShort = self.guildShortNames[guildName] or guildName or ""
+                            local theirMDGA = self:GetMDGAName(guildClubIdStr) or self.guildShortNames[guildName] or guildName or ""
                             table.insert(connections, {
                                 charName = charName,
                                 charRealm = charRealm,
                                 guildName = guildName,
-                                guildShort = theirShort,
+                                guildShort = theirMDGA,
                                 guildHomeRealm = guildHomeRealm or "",
                                 guildClubId = guildClubIdStr,
                                 connectionType = "guild-relay",
@@ -848,11 +845,12 @@ function GB:RefreshMessages()
         else
             self.scrollFrame:AddMessage("|cffffd700Connected Guilds:|r")
             for guildIdStr, guildInfo in pairs(seenGuildIds) do
-                local guildDisplay = guildInfo.guildName or "Unknown"
-                if guildInfo.guildHomeRealm then
+                local mdgaName = self:GetMDGAName(guildIdStr)
+                local guildDisplay = mdgaName or guildInfo.guildName or "Unknown"
+                if not mdgaName and guildInfo.guildHomeRealm then
                     guildDisplay = guildDisplay .. "-" .. guildInfo.guildHomeRealm
                 end
-                self.scrollFrame:AddMessage("  |cff00ff00" .. guildDisplay .. "|r |cff888888(ID: " .. guildIdStr .. ")|r")
+                self.scrollFrame:AddMessage("  |cff00ff00" .. guildDisplay .. "|r |cff888888(" .. (guildInfo.guildName or "") .. ")|r")
             end
             self.scrollFrame:AddMessage("")
 
@@ -862,15 +860,10 @@ function GB:RefreshMessages()
                 if conn.connectionType == "whisper" then
                     connIndicator = " |cffaaaaaa(alt)|r"
                 elseif conn.connectionType == "guild-relay" then
-                    connIndicator = " |cffaaaaaa(guild relay)|r"
+                    connIndicator = " |cffaaaaaa(relay)|r"
                 end
 
-                local charDisplay = conn.charName
-                if conn.charRealm and conn.charRealm ~= "" then
-                    charDisplay = charDisplay .. "-" .. conn.charRealm
-                end
-
-                self.scrollFrame:AddMessage("  |cff00ff00" .. charDisplay .. "|r in |cffffd700<" .. conn.guildShort .. ">|r" .. connIndicator)
+                self.scrollFrame:AddMessage("  |cff00ff00" .. myMDGAName .. "|r <-> |cffffd700" .. conn.guildShort .. "|r via |cff88ffff" .. conn.charName .. "|r" .. connIndicator)
             end
         end
 
@@ -1026,7 +1019,7 @@ function GB:HandleGuildRelayMessage(payload, sender)
         guildHomeRealmPart = guildRealmPart
     end
 
-    if guildPart and not self.allowedGuilds[guildPart] then
+    if not guildClubIdPart or not self:IsAllowedGuildId(guildClubIdPart) then
         return
     end
 
