@@ -996,26 +996,40 @@ function GB:ProcessGuildRelayQueue()
 
         local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
         local msgType
+        local bytesSent = 0
         if payload:sub(1, 10) == "_ANNOUNCE_" then
             local announcePayload = payload:sub(11)
-            GB:LogDC("SEND", "Guild ANNOUNCE size:" .. #announcePayload .. " mode:" .. throttleMode)
+            bytesSent = #announcePayload
+            GB:LogDC("SEND", "Guild ANNOUNCE size:" .. bytesSent .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, announcePayload, "GUILD")
             msgType = "ANNOUNCE"
         elseif payload:sub(1, 6) == "_DATA_" then
             local dataPayload = payload:sub(7)
-            GB:LogDC("SEND", "Guild DATA size:" .. #dataPayload .. " mode:" .. throttleMode)
-            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
+            local fullPayload = "[GBGD]" .. dataPayload
+            bytesSent = #fullPayload
+            GB:LogDC("SEND", "Guild DATA size:" .. bytesSent .. " mode:" .. throttleMode)
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, fullPayload, "GUILD")
             msgType = "DATA"
         else
-            GB:LogDC("SEND", "Guild CHAT size:" .. #payload .. " mode:" .. throttleMode)
-            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGR]" .. payload, "GUILD")
+            local fullPayload = "[GBGR]" .. payload
+            bytesSent = #fullPayload
+            GB:LogDC("SEND", "Guild CHAT size:" .. bytesSent .. " mode:" .. throttleMode)
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, fullPayload, "GUILD")
             msgType = "CHAT"
         end
 
         GB.trafficStats.guild = GB.trafficStats.guild + 1
+        GB:TrackBytesSent(bytesSent)
+
         if GB.enableTrafficDebug then
-            print("|cffff8800[Traffic]|r Guild " .. msgType .. " [" .. throttleMode .. "] (queue: " .. #GB.guildRelayQueue .. ", size: " .. #payload .. " bytes)")
+            local bytesPerSec = GB:GetBytesPerSecond()
+            local bytesColor = bytesPerSec > GB.BYTES_WARNING_THRESHOLD and "|cffff0000" or "|cff00ff00"
+            print(string.format("|cffff8800[Traffic]|r Guild %s [%s] %d bytes %s(%.0f B/s)|r (queue: %d)",
+                msgType, throttleMode, bytesSent, bytesColor, bytesPerSec, #GB.guildRelayQueue))
         end
+
+        -- Check for high data rate warning (even if traffic debug is off)
+        GB:CheckBytesWarning()
 
         if #GB.guildRelayQueue > 0 then
             -- Use guild's own throttle, not affected by zone recovery for guild channel

@@ -2067,6 +2067,30 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, string.format("  Roster Sync:  %.0fs between broadcasts", self.ROSTER_SYNC_THROTTLE))
     table.insert(lines, "")
 
+    table.insert(lines, "|cffffd700TRAFFIC|r")
+    local bytesPerSec, _ = self:GetBytesPerSecond()
+    local bytesColor = bytesPerSec > self.BYTES_WARNING_THRESHOLD and "|cffff0000" or (bytesPerSec > self.BYTES_THROTTLE_THRESHOLD and "|cffff8800" or "|cff00ff00")
+    local isDataThrottled = bytesPerSec > self.BYTES_THROTTLE_THRESHOLD
+
+    local throttleMode
+    if self:IsInZoneTransition() then
+        throttleMode = "|cffff0000PAUSED|r"
+    elseif self:IsInZoneRecovery() and isDataThrottled then
+        throttleMode = "|cffff0000RECOVERY+DATA|r"
+    elseif self:IsInZoneRecovery() then
+        throttleMode = "|cffff8800RECOVERY|r"
+    elseif isDataThrottled then
+        throttleMode = "|cffff8800DATA THROTTLE|r"
+    else
+        throttleMode = "|cff00ff00NORMAL|r"
+    end
+
+    local currentDelay = self:GetCurrentThrottleDelay()
+    table.insert(lines, string.format("  Mode:       %s (%.1fs delay)", throttleMode, currentDelay))
+    table.insert(lines, string.format("  Data Rate:  %s%.0f B/s|r (throttle: %d, warn: %d)", bytesColor, bytesPerSec, self.BYTES_THROTTLE_THRESHOLD, self.BYTES_WARNING_THRESHOLD))
+    table.insert(lines, string.format("  Total Sent: %d bytes", self.trafficStats.bytesOut))
+    table.insert(lines, "")
+
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     local myMDGAName = self:GetMDGAName(myGuildClubId) or "Not Allowed"
     local myGuildName = GetGuildInfo("player") or "No Guild"

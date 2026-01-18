@@ -31,10 +31,20 @@ function GB:IsInZoneRecovery()
 end
 
 function GB:GetCurrentThrottleDelay()
+    local baseDelay = self.SEND_THROTTLE_DELAY
+
+    -- Use slower throttle during zone recovery
     if self:IsInZoneRecovery() then
-        return self.ZONE_RECOVERY_THROTTLE
+        baseDelay = self.ZONE_RECOVERY_THROTTLE
     end
-    return self.SEND_THROTTLE_DELAY
+
+    -- Adaptive throttle: slow down if sending too much data
+    local bytesPerSec = self:GetBytesPerSecond()
+    if bytesPerSec > self.BYTES_THROTTLE_THRESHOLD then
+        baseDelay = baseDelay * self.BYTES_THROTTLE_MULTIPLIER
+    end
+
+    return baseDelay
 end
 
 function GB:CanSendGlobally()
@@ -83,7 +93,7 @@ GB.partyMembers = {}
 
 GB.loginHandshakeTimestamp = 0
 
-GB.GUILD_RELAY_THROTTLE = 4.0
+GB.GUILD_RELAY_THROTTLE = 1.0
 GB.lastGuildRelayTime = 0
 GB.guildRelayQueue = {}
 GB.isProcessingGuildRelay = false
@@ -106,9 +116,66 @@ GB.trafficStats = {
     rosterRequest = 0,
     party = 0,
     chat = 0,
+    -- Byte tracking
+    bytesOut = 0,
+    bytesOutWindow = {},  -- Rolling window of {time, bytes} for bytes/sec calculation
 }
+GB.BYTES_WARNING_THRESHOLD = 3000  -- Warn if sending more than 3000 bytes/sec
+GB.BYTES_THROTTLE_THRESHOLD = 2000 -- Start throttling at 2000 bytes/sec
+GB.BYTES_WINDOW_SECONDS = 5        -- Calculate bytes/sec over 5 second window
+GB.BYTES_WARNING_COOLDOWN = 10     -- Only warn once every 10 seconds
+GB.BYTES_THROTTLE_MULTIPLIER = 2.0 -- Double the delay when over threshold
+GB.lastBytesWarningTime = 0
 GB.enableTrafficDebug = false
 GB.enableEventDebug = false
+
+function GB:TrackBytesSent(numBytes)
+    local now = GetTime()
+    self.trafficStats.bytesOut = self.trafficStats.bytesOut + numBytes
+    table.insert(self.trafficStats.bytesOutWindow, {time = now, bytes = numBytes})
+
+    -- Prune old entries outside the window
+    while #self.trafficStats.bytesOutWindow > 0 and
+          (now - self.trafficStats.bytesOutWindow[1].time) > self.BYTES_WINDOW_SECONDS do
+        table.remove(self.trafficStats.bytesOutWindow, 1)
+    end
+end
+
+function GB:GetBytesPerSecond()
+    local now = GetTime()
+    local totalBytes = 0
+    local windowStart = now
+
+    for _, entry in ipairs(self.trafficStats.bytesOutWindow) do
+        if (now - entry.time) <= self.BYTES_WINDOW_SECONDS then
+            totalBytes = totalBytes + entry.bytes
+            if entry.time < windowStart then
+                windowStart = entry.time
+            end
+        end
+    end
+
+    local elapsed = now - windowStart
+    if elapsed < 0.1 then elapsed = 0.1 end  -- Avoid division by near-zero
+
+    return totalBytes / elapsed, totalBytes
+end
+
+function GB:CheckBytesWarning()
+    local now = GetTime()
+    if (now - self.lastBytesWarningTime) < self.BYTES_WARNING_COOLDOWN then
+        return false  -- Still in cooldown
+    end
+
+    local bytesPerSec, totalBytes = self:GetBytesPerSecond()
+    if bytesPerSec > self.BYTES_WARNING_THRESHOLD then
+        self.lastBytesWarningTime = now
+        print(string.format("|cffff0000[MNet WARNING]|r High data rate: %.0f bytes/sec (threshold: %d) - risk of D/C!",
+            bytesPerSec, self.BYTES_WARNING_THRESHOLD))
+        return true
+    end
+    return false
+end
 
 GB.mainFrame = nil
 GB.scrollFrame = nil
@@ -482,21 +549,34 @@ function GB:ProcessQueue()
         GB:RecordGlobalSend()
 
         local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
+        local payloadSize = #msg.payload
+
         if msg.type == "bnet" then
-            GB:LogDC("SEND", "BNet " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload .. " mode:" .. throttleMode)
+            GB:LogDC("SEND", "BNet " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. payloadSize .. " mode:" .. throttleMode)
             pcall(BNSendGameData, msg.target, msg.prefix, msg.payload)
             GB.trafficStats.bnet = GB.trafficStats.bnet + 1
+            GB:TrackBytesSent(payloadSize)
             if GB.enableTrafficDebug then
-                print(string.format("|cff00ff00[Traffic]|r BNet %s [%s] (queue: %d)", msgType, throttleMode, #GB.outgoingQueue))
+                local bytesPerSec = GB:GetBytesPerSecond()
+                local bytesColor = bytesPerSec > GB.BYTES_WARNING_THRESHOLD and "|cffff0000" or "|cff00ff00"
+                print(string.format("|cff00ff00[Traffic]|r BNet %s [%s] %d bytes %s(%.0f B/s)|r (queue: %d)",
+                    msgType, throttleMode, payloadSize, bytesColor, bytesPerSec, #GB.outgoingQueue))
             end
         elseif msg.type == "whisper" then
-            GB:LogDC("SEND", "Whisper " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload .. " mode:" .. throttleMode)
+            GB:LogDC("SEND", "Whisper " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. payloadSize .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(msg.prefix, msg.payload, "WHISPER", msg.target)
             GB.trafficStats.whisper = GB.trafficStats.whisper + 1
+            GB:TrackBytesSent(payloadSize)
             if GB.enableTrafficDebug then
-                print(string.format("|cff00ff00[Traffic]|r Whisper %s [%s] (queue: %d)", msgType, throttleMode, #GB.outgoingQueue))
+                local bytesPerSec = GB:GetBytesPerSecond()
+                local bytesColor = bytesPerSec > GB.BYTES_WARNING_THRESHOLD and "|cffff0000" or "|cff00ff00"
+                print(string.format("|cff00ff00[Traffic]|r Whisper %s [%s] %d bytes %s(%.0f B/s)|r (queue: %d)",
+                    msgType, throttleMode, payloadSize, bytesColor, bytesPerSec, #GB.outgoingQueue))
             end
         end
+
+        -- Check for high data rate warning (even if traffic debug is off)
+        GB:CheckBytesWarning()
 
         if #GB.outgoingQueue > 0 then
             local delay = GB:GetCurrentThrottleDelay()

@@ -203,6 +203,22 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         lastSeen = GetTime(),
     }
 
+    -- If character name lookup failed (e.g., during zone transition), retry later
+    if not charName then
+        C_Timer.After(5, function()
+            if GB.connectedBridgeUsers[senderGameAccountID] and not GB.connectedBridgeUsers[senderGameAccountID].characterName then
+                local retryName, retryRealm = lookupCharacterName(senderGameAccountID)
+                if retryName then
+                    GB.connectedBridgeUsers[senderGameAccountID].characterName = retryName
+                    GB.connectedBridgeUsers[senderGameAccountID].characterRealm = retryRealm
+                    if GB.currentPage == "status" then
+                        GB:RefreshMessages()
+                    end
+                end
+            end
+        end)
+    end
+
     self:RegisterGuild(guildName, guildHomeRealm, guildClubId)
 
     self:UpdateConnectionIndicators()

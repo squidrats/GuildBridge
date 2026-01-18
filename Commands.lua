@@ -183,6 +183,9 @@ SlashCmdList["MDGANET"] = function(msg)
         end
 
         local total = GB.trafficStats.bnet + GB.trafficStats.whisper + GB.trafficStats.guild
+        local bytesPerSec, _ = GB:GetBytesPerSecond()
+        local bytesColor = bytesPerSec > GB.BYTES_WARNING_THRESHOLD and "|cffff0000" or "|cff00ff00"
+
         print("|cff00ff00MNet Traffic Stats|r (last " .. math.floor(elapsed) .. "s):")
         print("  BNet messages: " .. GB.trafficStats.bnet .. " (" .. string.format("%.2f", GB.trafficStats.bnet / elapsed) .. "/sec)")
         print("  Whisper messages: " .. GB.trafficStats.whisper .. " (" .. string.format("%.2f", GB.trafficStats.whisper / elapsed) .. "/sec)")
@@ -190,6 +193,7 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700Total:|r " .. total .. " messages in " .. math.floor(elapsed) .. " seconds")
         print("  |cffffd700Rate:|r " .. string.format("%.1f", total/elapsed) .. " msg/sec")
         print("  |cffffd700Queue:|r BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
+        print("  |cffffd700Bytes:|r " .. GB.trafficStats.bytesOut .. " total, " .. bytesColor .. string.format("%.0f", bytesPerSec) .. " B/s|r (warn: " .. GB.BYTES_WARNING_THRESHOLD .. ")")
 
     elseif cmd == "events" then
         GB.enableEventDebug = not GB.enableEventDebug
