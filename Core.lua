@@ -13,6 +13,12 @@ GB.lastBNConnectedTime = 0
 GB.lastBNetAPICall = 0
 GB.BNET_API_THROTTLE = 5
 GB.lastPlayerEnteringWorld = 0
+GB.ZONE_TRANSITION_COOLDOWN = 8
+
+function GB:IsInZoneTransition()
+    local now = GetTime()
+    return (now - self.lastPlayerEnteringWorld) < self.ZONE_TRANSITION_COOLDOWN
+end
 
 GB.currentFilter = nil
 GB.currentPage = "chat"

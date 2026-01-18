@@ -23,6 +23,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             GB:CreateBridgeUI()
 
             C_Timer.NewTicker(120, function()
+                if GB:IsInZoneTransition() then return end
                 GB:ForceSendHandshake()
                 GB:ForceSendWhisperHandshake()
                 local now = GetTime()
@@ -55,12 +56,14 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             end)
 
             C_Timer.NewTicker(120, function()
+                if GB:IsInZoneTransition() then return end
                 if GB.RequestRosterResync then
                     GB:RequestRosterResync()
                 end
             end)
 
             C_Timer.NewTicker(30, function()
+                if GB:IsInZoneTransition() then return end
                 GB:ForceSendWhisperHandshake()
                 local now = GetTime()
                 for altName, info in pairs(GB.connectedWhisperAlts) do
@@ -204,6 +207,13 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         local now = GetTime()
 
         if now < 5 then
+            return
+        end
+
+        if GB:IsInZoneTransition() then
+            if GB.enableEventDebug and now > 10 then
+                print("|cff888888[Event]|r BN_FRIEND_INFO_CHANGED (skipped - zone transition)")
+            end
             return
         end
 
@@ -387,10 +397,12 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GUILD_ROSTER_UPDATE" then
+        if GB:IsInZoneTransition() then return end
         if not GB.rosterUpdatePending then
             GB.rosterUpdatePending = true
             C_Timer.After(1, function()
                 GB.rosterUpdatePending = false
+                if GB:IsInZoneTransition() then return end
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
@@ -398,8 +410,16 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
-        if GB.ProcessPartyUpdate then
-            GB:ProcessPartyUpdate()
+        if GB:IsInZoneTransition() then return end
+        if not GB.partyUpdatePending then
+            GB.partyUpdatePending = true
+            C_Timer.After(1, function()
+                GB.partyUpdatePending = false
+                if GB:IsInZoneTransition() then return end
+                if GB.ProcessPartyUpdate then
+                    GB:ProcessPartyUpdate()
+                end
+            end)
         end
     end
 end)
