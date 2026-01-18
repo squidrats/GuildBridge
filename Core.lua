@@ -6,7 +6,7 @@ GB.BRIDGE_PAYLOAD_PREFIX = "[GB]"
 GB.BRIDGE_ADDON_PREFIX = "MNet"
 GB.MESSAGE_DEDUPE_WINDOW = 10
 GB.HANDSHAKE_THROTTLE = 10
-GB.SEND_THROTTLE_DELAY = 1.0
+GB.SEND_THROTTLE_DELAY = 0.3
 GB.FRIEND_INFO_DEBOUNCE = 5
 GB.lastFriendInfoChange = 0
 GB.lastBNConnectedTime = 0
@@ -93,7 +93,7 @@ GB.partyMembers = {}
 
 GB.loginHandshakeTimestamp = 0
 
-GB.GUILD_RELAY_THROTTLE = 1.0
+GB.GUILD_RELAY_THROTTLE = 0.3
 GB.lastGuildRelayTime = 0
 GB.guildRelayQueue = {}
 GB.isProcessingGuildRelay = false
