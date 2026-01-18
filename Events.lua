@@ -104,6 +104,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
         C_Timer.After(3, function()
+            if GB:IsInZoneTransition() then return end
             if GB.enableEventDebug then
                 print("|cff888888[Event]|r Delayed UpdateOnlineFriends running...")
             end
@@ -121,6 +122,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         GB:UpdateConnectionIndicators()
 
         C_Timer.After(2, function()
+            if GB:IsInZoneTransition() then return end
             if IsInGuild() then
                 local myGuildName = GetGuildInfo("player")
                 local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
@@ -139,6 +141,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             GB.loginHandshakeTimestamp = now
 
             C_Timer.After(5, function()
+                if GB:IsInZoneTransition() then return end
                 if C_GuildInfo and C_GuildInfo.GuildRoster then
                     C_GuildInfo.GuildRoster()
                 elseif GuildRoster then
@@ -146,22 +149,27 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
             end)
             C_Timer.After(8, function()
+                if GB:IsInZoneTransition() then return end
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
             end)
             C_Timer.After(15, function()
+                if GB:IsInZoneTransition() then return end
                 GB:ForceSendHandshake()
             end)
             C_Timer.After(25, function()
+                if GB:IsInZoneTransition() then return end
                 GB:ForceSendWhisperHandshake()
             end)
             C_Timer.After(35, function()
+                if GB:IsInZoneTransition() then return end
                 if GB.ProcessPartyUpdate then
                     GB:ProcessPartyUpdate(true)
                 end
             end)
             C_Timer.After(45, function()
+                if GB:IsInZoneTransition() then return end
                 GB:AnnounceAllRelayConnections()
                 GB:StartRelayKeepalive()
             end)
@@ -190,6 +198,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         GB.lastBNConnectedTime = now
 
         C_Timer.After(10, function()
+            if GB:IsInZoneTransition() then return end
             if GB.enableEventDebug then
                 print("|cff888888[Event]|r BN_CONNECTED delayed UpdateOnlineFriends running...")
             end
@@ -197,6 +206,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
         C_Timer.After(20, function()
+            if GB:IsInZoneTransition() then return end
             if GB.enableEventDebug then
                 print("|cff888888[Event]|r BN_CONNECTED delayed ForceSendHandshake running...")
             end
@@ -245,6 +255,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
         C_Timer.After(3, function()
+            if GB:IsInZoneTransition() then return end
             if GB.enableEventDebug then
                 print("|cff888888[Event]|r BN_FRIEND_INFO_CHANGED delayed processing running...")
             end
@@ -311,7 +322,9 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
     elseif event == "PLAYER_GUILD_UPDATE" then
+        if GB:IsInZoneTransition() then return end
         C_Timer.After(0.5, function()
+            if GB:IsInZoneTransition() then return end
             local guildName = GetGuildInfo("player")
             local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
             if guildName and myGuildClubId and GB:IsAllowedGuildId(myGuildClubId) then

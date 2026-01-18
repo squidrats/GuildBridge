@@ -319,11 +319,18 @@ function GB:BroadcastRosterDelta(deltas)
 
     if not self.rosterDeltaTimerScheduled then
         self.rosterDeltaTimerScheduled = true
-        C_Timer.After(self.ROSTER_DELTA_BATCH_INTERVAL, function()
+        local function tryBroadcast()
             GB.rosterDeltaTimerScheduled = false
+            if GB:IsInZoneTransition() then
+                -- Reschedule if in zone transition
+                GB.rosterDeltaTimerScheduled = true
+                C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, tryBroadcast)
+                return
+            end
             GB.lastRosterBroadcast = GetTime()
             doSendRosterDeltas()
-        end)
+        end
+        C_Timer.After(self.ROSTER_DELTA_BATCH_INTERVAL, tryBroadcast)
     end
 end
 
