@@ -85,14 +85,12 @@ GB.eventFrame = CreateFrame("Frame")
 GB.guildShortNames = {
     ["MAKE ELWYNN GREAT AGAIN"] = "MEGA",
     ["MAKE DUROTAR GREAT AGAIN"] = "MDGA",
-    ["Bestiez"] = "Bestiez",
 }
 
 GB.guildNumbers = {
     ["MAKE DUROTAR GREAT AGAIN-Tichondrius"] = 1,
     ["MAKE DUROTAR GREAT AGAIN-Illidan"] = 3,
     ["MAKE DUROTAR GREAT AGAIN-Thrall"] = 2,
-    ["Bestiez-Tichondrius"] = 2,
 }
 
 function GB:HasElvUI()
@@ -107,7 +105,6 @@ end
 
 GB.allowedGuilds = {
     ["MAKE DUROTAR GREAT AGAIN"] = true,
-    ["Bestiez"] = true,
 }
 
 GB.classColors = {
