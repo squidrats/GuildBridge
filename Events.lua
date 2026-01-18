@@ -90,6 +90,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         local isLogin, isReload = ...
 
         GB.lastPlayerEnteringWorld = GetTime()
+        GB:LogDC("EVENT", "PLAYER_ENTERING_WORLD isLogin=" .. tostring(isLogin) .. " isReload=" .. tostring(isReload))
 
         if GB.enableEventDebug then
             print("|cffff8800[Event]|r PLAYER_ENTERING_WORLD isLogin=" .. tostring(isLogin) .. " isReload=" .. tostring(isReload))
@@ -221,7 +222,9 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
             return
         end
 
+        GB:LogDC("EVENT", "BN_FRIEND_INFO_CHANGED")
         if GB:IsInZoneTransition() then
+            GB:LogDC("EVENT", "BN_FRIEND_INFO_CHANGED skipped - zone transition")
             if GB.enableEventDebug and now > 10 then
                 print("|cff888888[Event]|r BN_FRIEND_INFO_CHANGED (skipped - zone transition)")
             end
@@ -351,18 +354,37 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "CHAT_MSG_GUILD" then
         local text, sender, _, _, _, _, _, _, _, _, _, guid = ...
+        GB:LogDC("EVENT", "CHAT_MSG_GUILD from " .. tostring(sender))
         GB:HandleGuildChatMessage(text, sender, nil, nil, nil, nil, nil, nil, nil, nil, nil, guid)
 
     elseif event == "BN_CHAT_MSG_ADDON" then
         local prefix, message, _, senderID = ...
+        if prefix == GB.BRIDGE_ADDON_PREFIX then
+            local msgType = "unknown"
+            if message:sub(1, 6) == "[GBHS]" then msgType = "handshake"
+            elseif message:sub(1, 6) == "[GBRF]" then msgType = "roster-full"
+            elseif message:sub(1, 6) == "[GBRD]" then msgType = "roster-delta"
+            elseif message:sub(1, 6) == "[GBRR]" then msgType = "roster-req"
+            elseif message:sub(1, 4) == "[GB]" then msgType = "chat"
+            end
+            GB:LogDC("RECV", "BNet " .. msgType .. " from " .. tostring(senderID) .. " size:" .. #message)
+        end
         GB:HandleBNAddonMessage(prefix, message, senderID)
 
     elseif event == "CHAT_MSG_ADDON" then
         local prefix, message, channel, sender = ...
         if prefix == GB.BRIDGE_ADDON_PREFIX then
             if channel == "WHISPER" then
+                local msgType = "unknown"
+                if message:sub(1, 7) == "[GBWHS]" then msgType = "handshake"
+                elseif message:sub(1, 6) == "[GBRF]" then msgType = "roster-full"
+                elseif message:sub(1, 6) == "[GBRD]" then msgType = "roster-delta"
+                elseif message:sub(1, 4) == "[GB]" then msgType = "chat"
+                end
+                GB:LogDC("RECV", "Whisper " .. msgType .. " from " .. tostring(sender) .. " size:" .. #message)
                 GB:HandleWhisperAddonMessage(prefix, message, sender)
             elseif channel == "GUILD" then
+                GB:LogDC("RECV", "Guild msg from " .. tostring(sender) .. " size:" .. #message)
                 if message:sub(1, 6) == "[GBRA]" then
                     GB:HandleRelayCandidateMessage(message, sender)
                 elseif message:sub(1, 6) == "[GBGR]" then
@@ -411,12 +433,20 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GUILD_ROSTER_UPDATE" then
-        if GB:IsInZoneTransition() then return end
+        GB:LogDC("EVENT", "GUILD_ROSTER_UPDATE")
+        if GB:IsInZoneTransition() then
+            GB:LogDC("EVENT", "GUILD_ROSTER_UPDATE skipped - zone transition")
+            return
+        end
         if not GB.rosterUpdatePending then
             GB.rosterUpdatePending = true
             C_Timer.After(1, function()
                 GB.rosterUpdatePending = false
-                if GB:IsInZoneTransition() then return end
+                if GB:IsInZoneTransition() then
+                    GB:LogDC("EVENT", "GUILD_ROSTER_UPDATE timer skipped - zone transition")
+                    return
+                end
+                GB:LogDC("EVENT", "GUILD_ROSTER_UPDATE processing")
                 if GB.ProcessGuildRosterUpdate then
                     GB:ProcessGuildRosterUpdate()
                 end
@@ -424,13 +454,22 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         end
 
     elseif event == "GROUP_ROSTER_UPDATE" then
-        if GB:IsInZoneTransition() then return end
+        local numMembers = GetNumGroupMembers()
+        GB:LogDC("EVENT", "GROUP_ROSTER_UPDATE members=" .. numMembers)
+        if GB:IsInZoneTransition() then
+            GB:LogDC("EVENT", "GROUP_ROSTER_UPDATE skipped - zone transition")
+            return
+        end
         if not GB.partyUpdatePending then
             GB.partyUpdatePending = true
             C_Timer.After(1, function()
                 GB.partyUpdatePending = false
-                if GB:IsInZoneTransition() then return end
+                if GB:IsInZoneTransition() then
+                    GB:LogDC("EVENT", "GROUP_ROSTER_UPDATE timer skipped - zone transition")
+                    return
+                end
                 if GB.ProcessPartyUpdate then
+                    GB:LogDC("EVENT", "GROUP_ROSTER_UPDATE processing")
                     GB:ProcessPartyUpdate()
                 end
             end)
@@ -440,6 +479,7 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
         -- Protect against seamless zone transitions (flying between zones)
         -- PLAYER_ENTERING_WORLD doesn't fire for these, so we need this event
         GB.lastPlayerEnteringWorld = GetTime()
+        GB:LogDC("EVENT", "ZONE_CHANGED_NEW_AREA - zone transition protection activated")
         if GB.enableEventDebug then
             print("|cffff8800[Event]|r ZONE_CHANGED_NEW_AREA - activating zone transition protection")
         end

@@ -976,6 +976,7 @@ function GB:ProcessGuildRelayQueue()
 
         -- Pause queue processing during zone transitions
         if GB:IsInZoneTransition() then
+            GB:LogDC("GQUEUE", "Paused - zone transition (queue: " .. #GB.guildRelayQueue .. ")")
             C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, processNext)
             return
         end
@@ -985,13 +986,16 @@ function GB:ProcessGuildRelayQueue()
         local msgType
         if payload:sub(1, 10) == "_ANNOUNCE_" then
             local announcePayload = payload:sub(11)
+            GB:LogDC("SEND", "Guild ANNOUNCE size:" .. #announcePayload)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, announcePayload, "GUILD")
             msgType = "ANNOUNCE"
         elseif payload:sub(1, 6) == "_DATA_" then
             local dataPayload = payload:sub(7)
+            GB:LogDC("SEND", "Guild DATA size:" .. #dataPayload)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
             msgType = "DATA"
         else
+            GB:LogDC("SEND", "Guild CHAT size:" .. #payload)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGR]" .. payload, "GUILD")
             msgType = "CHAT"
         end

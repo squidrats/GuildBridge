@@ -198,10 +198,127 @@ function GB:EnsureSavedVariables()
     if MNetDB.enableTrafficDebug == nil then
         MNetDB.enableTrafficDebug = false
     end
+    if MNetDB.dcLog == nil then
+        MNetDB.dcLog = {}
+    end
+    -- Force DC logging on for debugging - can disable with /mndclog off
+    MNetDB.enableDCLog = true
     self.knownGuilds = MNetDB.knownGuilds
     self.registeredAlts = MNetDB.registeredAlts
     self.enableEventDebug = MNetDB.enableEventDebug
     self.enableTrafficDebug = MNetDB.enableTrafficDebug
+    self.enableDCLog = MNetDB.enableDCLog
+end
+
+-- Persistent DC logging - survives disconnects
+function GB:LogDC(category, message)
+    if not self.enableDCLog then return end
+    if not MNetDB.dcLog then MNetDB.dcLog = {} end
+
+    local timestamp = date("%H:%M:%S")
+    local gameTime = string.format("%.2f", GetTime())
+    local inZoneTransition = self:IsInZoneTransition() and "ZT" or ""
+    local queueSize = #self.outgoingQueue
+    local guildQueueSize = #self.guildRelayQueue
+
+    local entry = string.format("[%s|%s] %s%s Q:%d GQ:%d | %s",
+        timestamp, gameTime, category, inZoneTransition ~= "" and (" " .. inZoneTransition) or "",
+        queueSize, guildQueueSize, message)
+
+    table.insert(MNetDB.dcLog, entry)
+
+    -- Keep only last 2000 entries (covers 10-20 min of heavy raid activity)
+    while #MNetDB.dcLog > 2000 do
+        table.remove(MNetDB.dcLog, 1)
+    end
+end
+
+SLASH_MNDCLOG1 = "/mndclog"
+SlashCmdList["MNDCLOG"] = function(msg)
+    msg = msg:lower():trim()
+
+    if msg == "on" then
+        MNetDB.enableDCLog = true
+        GB.enableDCLog = true
+        print("|cff00ff00[MNet]|r DC logging ENABLED - logs will persist after disconnect")
+        GB:LogDC("SYSTEM", "DC logging started")
+    elseif msg == "off" then
+        GB:LogDC("SYSTEM", "DC logging stopped")
+        MNetDB.enableDCLog = false
+        GB.enableDCLog = false
+        print("|cff00ff00[MNet]|r DC logging DISABLED")
+    elseif msg == "clear" then
+        MNetDB.dcLog = {}
+        print("|cff00ff00[MNet]|r DC log cleared")
+    elseif msg == "show" or msg == "" then
+        if not MNetDB.dcLog or #MNetDB.dcLog == 0 then
+            print("|cff00ff00[MNet]|r DC log is empty")
+            return
+        end
+        print("|cff00ff00[MNet]|r === DC Log (" .. #MNetDB.dcLog .. " entries) ===")
+        -- Show last 50 entries
+        local startIdx = math.max(1, #MNetDB.dcLog - 49)
+        for i = startIdx, #MNetDB.dcLog do
+            print(MNetDB.dcLog[i])
+        end
+        print("|cff00ff00[MNet]|r === End of log (use /mndclog copy for full log) ===")
+    elseif msg == "copy" then
+        if not MNetDB.dcLog or #MNetDB.dcLog == 0 then
+            print("|cff00ff00[MNet]|r DC log is empty")
+            return
+        end
+        -- Create a frame with an editbox to copy from
+        local f = CreateFrame("Frame", nil, UIParent, "BackdropTemplate")
+        f:SetSize(600, 400)
+        f:SetPoint("CENTER")
+        f:SetBackdrop({
+            bgFile = "Interface/Tooltips/UI-Tooltip-Background",
+            edgeFile = "Interface/Tooltips/UI-Tooltip-Border",
+            edgeSize = 16,
+            insets = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        f:SetBackdropColor(0, 0, 0, 0.9)
+        f:SetFrameStrata("DIALOG")
+        f:EnableMouse(true)
+        f:SetMovable(true)
+        f:RegisterForDrag("LeftButton")
+        f:SetScript("OnDragStart", f.StartMoving)
+        f:SetScript("OnDragStop", f.StopMovingOrSizing)
+
+        local title = f:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        title:SetPoint("TOP", 0, -10)
+        title:SetText("MNet DC Log - Select All and Copy (Ctrl+A, Ctrl+C)")
+
+        local close = CreateFrame("Button", nil, f, "UIPanelCloseButton")
+        close:SetPoint("TOPRIGHT", -5, -5)
+
+        local scroll = CreateFrame("ScrollFrame", nil, f, "UIPanelScrollFrameTemplate")
+        scroll:SetPoint("TOPLEFT", 10, -35)
+        scroll:SetPoint("BOTTOMRIGHT", -30, 10)
+
+        local eb = CreateFrame("EditBox", nil, scroll)
+        eb:SetMultiLine(true)
+        eb:SetFontObject(GameFontHighlightSmall)
+        eb:SetWidth(550)
+        eb:SetAutoFocus(false)
+        eb:SetScript("OnEscapePressed", function() f:Hide() end)
+        scroll:SetScrollChild(eb)
+
+        local logText = table.concat(MNetDB.dcLog, "\n")
+        eb:SetText(logText)
+        eb:HighlightText()
+        eb:SetFocus()
+
+        f:Show()
+    else
+        print("|cff00ff00[MNet]|r DC Log commands:")
+        print("  /mndclog on - Enable DC logging")
+        print("  /mndclog off - Disable DC logging")
+        print("  /mndclog show - Show recent log entries")
+        print("  /mndclog copy - Open copyable log window")
+        print("  /mndclog clear - Clear the log")
+        print("  Status: " .. (GB.enableDCLog and "|cff00ff00ENABLED|r" or "|cffff0000DISABLED|r"))
+    end
 end
 
 function GB:SaveWindowPosition()
@@ -297,6 +414,7 @@ function GB:ProcessQueue()
 
         -- Pause queue processing during zone transitions
         if GB:IsInZoneTransition() then
+            GB:LogDC("QUEUE", "Paused - zone transition (queue: " .. #GB.outgoingQueue .. ")")
             C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, processNext)
             return
         end
@@ -327,12 +445,14 @@ function GB:ProcessQueue()
         end
 
         if msg.type == "bnet" then
+            GB:LogDC("SEND", "BNet " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload)
             pcall(BNSendGameData, msg.target, msg.prefix, msg.payload)
             GB.trafficStats.bnet = GB.trafficStats.bnet + 1
             if GB.enableTrafficDebug then
                 print(string.format("|cff00ff00[Traffic]|r BNet %s (queue: %d)", msgType, #GB.outgoingQueue))
             end
         elseif msg.type == "whisper" then
+            GB:LogDC("SEND", "Whisper " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload)
             C_ChatInfo.SendAddonMessage(msg.prefix, msg.payload, "WHISPER", msg.target)
             GB.trafficStats.whisper = GB.trafficStats.whisper + 1
             if GB.enableTrafficDebug then
