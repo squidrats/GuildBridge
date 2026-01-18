@@ -317,17 +317,11 @@ function GB:BroadcastRosterDelta(deltas)
         self.pendingRosterDeltas.added[name] = info
     end
 
-    local now = GetTime()
-    if now - self.lastRosterBroadcast >= self.ROSTER_SYNC_THROTTLE then
-        self.lastRosterBroadcast = now
-        self.rosterDeltaTimerScheduled = false
-        doSendRosterDeltas()
-    elseif not self.rosterDeltaTimerScheduled then
+    if not self.rosterDeltaTimerScheduled then
         self.rosterDeltaTimerScheduled = true
-        local delay = self.ROSTER_SYNC_THROTTLE - (now - self.lastRosterBroadcast)
-        C_Timer.After(delay, function()
-            self.rosterDeltaTimerScheduled = false
-            self.lastRosterBroadcast = GetTime()
+        C_Timer.After(self.ROSTER_DELTA_BATCH_INTERVAL, function()
+            GB.rosterDeltaTimerScheduled = false
+            GB.lastRosterBroadcast = GetTime()
             doSendRosterDeltas()
         end)
     end
@@ -380,8 +374,8 @@ function GB:ProcessGuildRosterUpdate()
         self:BroadcastRosterDelta(deltas)
     end
 
-    if self.RefreshRoster then
-        self:RefreshRoster()
+    if self.ScheduleRefreshRoster then
+        self:ScheduleRefreshRoster()
     end
 end
 
@@ -534,8 +528,8 @@ function GB:AssembleAndApplyRoster(guildClubId, pending)
         guildClubId = guildClubId,
     }
 
-    if self.RefreshRoster then
-        self:RefreshRoster()
+    if self.ScheduleRefreshRoster then
+        self:ScheduleRefreshRoster()
     end
 end
 
@@ -607,8 +601,8 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     roster.version = version
     roster.lastUpdate = GetTime()
 
-    if self.RefreshRoster then
-        self:RefreshRoster()
+    if self.ScheduleRefreshRoster then
+        self:ScheduleRefreshRoster()
     end
 end
 
@@ -630,8 +624,8 @@ function GB:ClearDisconnectedRosters()
     end
 
     if clearedAny then
-        if self.RefreshRoster then
-            self:RefreshRoster()
+        if self.ScheduleRefreshRoster then
+            self:ScheduleRefreshRoster()
         end
     end
 end
@@ -719,8 +713,8 @@ function GB:ProcessPartyUpdate(skipBroadcast)
     local currentMembers = self:GetPartyMemberKeys()
     self.partyMembers = currentMembers
 
-    if self.RefreshRoster then
-        self:RefreshRoster()
+    if self.ScheduleRefreshRoster then
+        self:ScheduleRefreshRoster()
     end
 end
 

@@ -35,9 +35,13 @@ GB.pendingRosterChunks = {}
 GB.pendingRosterDeltas = { added = {}, removed = {} }
 GB.rosterDeltaTimerScheduled = false
 GB.ROSTER_SYNC_THROTTLE = 30
+GB.ROSTER_DELTA_BATCH_INTERVAL = 3.0
 GB.ROSTER_CHUNK_SIZE = 200
 GB.lastRosterBroadcast = 0
 GB.rosterUpdatePending = false
+
+GB.REFRESH_ROSTER_DEBOUNCE = 0.3
+GB.refreshRosterPending = false
 GB.rosterRequestQueue = {}
 GB.isProcessingRosterRequests = false
 GB.ROSTER_REQUEST_THROTTLE = 5.0

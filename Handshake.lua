@@ -154,8 +154,8 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
                     roster.lastUpdate = GetTime()
                     self.guildRosters[filterKey] = roster
 
-                    if self.RefreshRoster then
-                        self:RefreshRoster()
+                    if self.ScheduleRefreshRoster then
+                        self:ScheduleRefreshRoster()
                     end
                 end
             end
@@ -352,8 +352,8 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
                     roster.lastUpdate = GetTime()
                     self.guildRosters[filterKey] = roster
 
-                    if self.RefreshRoster then
-                        self:RefreshRoster()
+                    if self.ScheduleRefreshRoster then
+                        self:ScheduleRefreshRoster()
                     end
                 end
             end

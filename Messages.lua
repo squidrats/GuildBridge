@@ -57,8 +57,8 @@ function GB:RegisterGuild(guildName, guildHomeRealm, guildClubId)
             self:RebuildTabs()
         end
 
-        if self.RefreshRoster then
-            self:RefreshRoster()
+        if self.ScheduleRefreshRoster then
+            self:ScheduleRefreshRoster()
         end
     elseif guildHomeRealm and not self.knownGuilds[filterKey].guildHomeRealm then
         self.knownGuilds[filterKey].guildHomeRealm = guildHomeRealm

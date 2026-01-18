@@ -110,7 +110,7 @@ function GB:UpdateConnectionIndicators()
         end
     end
 
-    self:RefreshRoster()
+    self:ScheduleRefreshRoster()
 end
 
 local function hexToRGB(hex)
@@ -119,6 +119,17 @@ local function hexToRGB(hex)
     local g = tonumber(hex:sub(3, 4), 16) / 255
     local b = tonumber(hex:sub(5, 6), 16) / 255
     return r, g, b
+end
+
+function GB:ScheduleRefreshRoster()
+    if self.refreshRosterPending then
+        return
+    end
+    self.refreshRosterPending = true
+    C_Timer.After(self.REFRESH_ROSTER_DEBOUNCE, function()
+        GB.refreshRosterPending = false
+        GB:RefreshRoster()
+    end)
 end
 
 function GB:RefreshRoster()
@@ -982,7 +993,7 @@ createTab = function(parent, guildLabel, realmLabel, filterValue, xOffset, yOffs
             GB.currentFilter = filterValue
             updateTabHighlights()
             GB:RefreshMessages()
-            GB:RefreshRoster()
+            GB:ScheduleRefreshRoster()
         end
     end)
 
@@ -1181,7 +1192,7 @@ updatePageVisibility = function()
     if GB.currentPage == "chat" or GB.currentPage == "status" then
         GB:RefreshMessages()
     end
-    GB:RefreshRoster()
+    GB:ScheduleRefreshRoster()
 end
 
 function GB:RebuildTabs()
@@ -1425,17 +1436,31 @@ function GB:CreateBridgeUI()
     debugScrollFrame:SetPoint("TOPLEFT", 8, -8)
     debugScrollFrame:SetPoint("BOTTOMRIGHT", -24, 8)
 
-    local debugTextContainer = CreateFrame("Frame", nil, debugScrollFrame)
-    debugTextContainer:SetSize(debugScrollFrame:GetWidth(), 1)
+    local debugEditBox = CreateFrame("EditBox", nil, debugScrollFrame)
+    debugEditBox:SetMultiLine(true)
+    debugEditBox:SetAutoFocus(false)
+    debugEditBox:SetFontObject(GameFontHighlightSmall)
+    debugEditBox:SetTextColor(unpack(COLORS.textNormal))
+    debugEditBox:SetWidth(debugScrollFrame:GetWidth() - 16)
+    debugEditBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    debugEditBox:EnableMouse(true)
+    debugEditBox:SetScript("OnChar", function(self) end)
+    debugEditBox:SetScript("OnKeyDown", function(self, key)
+        if key ~= "C" and not IsControlKeyDown() and key ~= "A" then
+            if key ~= "UP" and key ~= "DOWN" and key ~= "LEFT" and key ~= "RIGHT"
+               and key ~= "HOME" and key ~= "END" and key ~= "PAGEUP" and key ~= "PAGEDOWN" then
+                return
+            end
+        end
+    end)
+    debugEditBox:SetScript("OnTextChanged", function(self)
+        if self._settingText then return end
+        self._settingText = true
+        self:SetText(self._lastText or "")
+        self._settingText = false
+    end)
 
-    local debugText = debugTextContainer:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    debugText:SetJustifyH("LEFT")
-    debugText:SetJustifyV("TOP")
-    debugText:SetPoint("TOPLEFT", debugTextContainer, "TOPLEFT", 0, 0)
-    debugText:SetWidth(debugScrollFrame:GetWidth() - 16)
-    debugText:SetTextColor(unpack(COLORS.textNormal))
-
-    debugScrollFrame:SetScrollChild(debugTextContainer)
+    debugScrollFrame:SetScrollChild(debugEditBox)
 
     local debugScrollBar = CreateFrame("Slider", nil, debugScrollFrame, "UIPanelScrollBarTemplate")
     debugScrollBar:SetPoint("TOPLEFT", debugScrollFrame, "TOPRIGHT", 4, -16)
@@ -1458,8 +1483,7 @@ function GB:CreateBridgeUI()
         end
     end)
 
-    self.debugText = debugText
-    self.debugTextContainer = debugTextContainer
+    self.debugEditBox = debugEditBox
     self.debugScrollFrame = debugScrollFrame
     self.debugScrollBar = debugScrollBar
 
@@ -1993,7 +2017,7 @@ function GB:ToggleBridgeFrame()
 end
 
 function GB:UpdateDebugDisplay()
-    if not self.debugText then return end
+    if not self.debugEditBox then return end
 
     local now = GetTime()
     local elapsed = now - self.trafficStats.lastReset
@@ -2043,20 +2067,41 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, string.format("  Roster Sync:  %.0fs between broadcasts", self.ROSTER_SYNC_THROTTLE))
     table.insert(lines, "")
 
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    local myMDGAName = self:GetMDGAName(myGuildClubId) or "Not Allowed"
+    local myGuildName = GetGuildInfo("player") or "No Guild"
+
+    table.insert(lines, "|cffffd700MY GUILD|r")
+    table.insert(lines, string.format("  Name: %s", myGuildName))
+    table.insert(lines, string.format("  ID:   %s", myGuildClubId and tostring(myGuildClubId) or "None"))
+    table.insert(lines, string.format("  MDGA: %s", myMDGAName))
+    local isAllowed = myGuildClubId and self:IsAllowedGuildId(myGuildClubId)
+    table.insert(lines, string.format("  Allowed: %s", isAllowed and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+    table.insert(lines, "")
+
+    table.insert(lines, "|cffffd700ALLOWED GUILD IDS|r")
+    for guildId, info in pairs(self.allowedGuildIds) do
+        local matchIndicator = (myGuildClubId and tostring(myGuildClubId) == guildId) and " |cff00ff00<-- YOU|r" or ""
+        table.insert(lines, string.format("  %s: %s (%s)%s", info.name, guildId, info.realm, matchIndicator))
+    end
+    table.insert(lines, "")
+
     table.insert(lines, "|cffffd700CONNECTIONS|r")
     table.insert(lines, string.format("  BNet Friends: %d", bnetCount))
     table.insert(lines, string.format("  Whisper Alts: %d", altCount))
     table.insert(lines, "")
 
-    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-    local myMDGAName = self:GetMDGAName(myGuildClubId) or "Unknown"
-
     if bnetCount > 0 then
         table.insert(lines, "|cffffd700BNET BRIDGE CONNECTIONS|r")
         for gameAccountID, info in pairs(self.connectedBridgeUsers) do
             local charName = info.characterName or "Unknown"
-            local theirMDGAName = self:GetMDGAName(info.guildClubId) or info.guildName or "Unknown"
+            local theirGuildId = info.guildClubId and tostring(info.guildClubId) or "None"
+            local theirMDGAName = self:GetMDGAName(info.guildClubId) or "Not Allowed"
+            local theirGuildName = info.guildName or "Unknown"
+            local theirAllowed = info.guildClubId and self:IsAllowedGuildId(info.guildClubId)
             table.insert(lines, string.format("  %s <-> %s via %s", myMDGAName, theirMDGAName, charName))
+            table.insert(lines, string.format("    Guild: %s | ID: %s", theirGuildName, theirGuildId))
+            table.insert(lines, string.format("    Allowed: %s", theirAllowed and "|cff00ff00YES|r" or "|cffff0000NO|r"))
         end
         table.insert(lines, "")
     end
@@ -2064,8 +2109,13 @@ function GB:UpdateDebugDisplay()
     if altCount > 0 then
         table.insert(lines, "|cffffd700WHISPER ALT CONNECTIONS|r")
         for altName, info in pairs(self.connectedWhisperAlts) do
-            local theirMDGAName = self:GetMDGAName(info.guildClubId) or info.guildName or "Unknown"
+            local theirGuildId = info.guildClubId and tostring(info.guildClubId) or "None"
+            local theirMDGAName = self:GetMDGAName(info.guildClubId) or "Not Allowed"
+            local theirGuildName = info.guildName or "Unknown"
+            local theirAllowed = info.guildClubId and self:IsAllowedGuildId(info.guildClubId)
             table.insert(lines, string.format("  %s <-> %s via %s", myMDGAName, theirMDGAName, altName))
+            table.insert(lines, string.format("    Guild: %s | ID: %s", theirGuildName, theirGuildId))
+            table.insert(lines, string.format("    Allowed: %s", theirAllowed and "|cff00ff00YES|r" or "|cffff0000NO|r"))
         end
         table.insert(lines, "")
     end
@@ -2081,15 +2131,19 @@ function GB:UpdateDebugDisplay()
             local guildsList = {}
             for guildClubId, _ in pairs(info.guilds) do
                 local mdgaName = self:GetMDGAName(guildClubId)
-                if not mdgaName then
+                local idStr = tostring(guildClubId)
+                if mdgaName then
+                    table.insert(guildsList, string.format("%s (ID:%s)", mdgaName, idStr))
+                else
+                    local guildName = "Unknown"
                     for filterKey, guildInfo in pairs(self.knownGuilds) do
-                        if tostring(guildInfo.guildClubId) == tostring(guildClubId) then
-                            mdgaName = guildInfo.guildName or "Unknown"
+                        if tostring(guildInfo.guildClubId) == idStr then
+                            guildName = guildInfo.guildName or "Unknown"
                             break
                         end
                     end
+                    table.insert(guildsList, string.format("%s (ID:%s)|cffff0000*|r", guildName, idStr))
                 end
-                table.insert(guildsList, mdgaName or "Unknown")
             end
             local guildsStr = table.concat(guildsList, ", ")
             table.insert(lines, string.format("  %s relaying <%s>", senderName, guildsStr))
@@ -2119,10 +2173,16 @@ function GB:UpdateDebugDisplay()
     table.insert(lines, "|cff888888Commands: /mn traffic (enable chat logging) | /mn stats (show stats) | /mn help (all commands)|r")
     table.insert(lines, "|cff888888Auto-updates every second|r")
 
-    self.debugText:SetText(table.concat(lines, "\n"))
+    local text = table.concat(lines, "\n")
+    self.debugEditBox._lastText = text
+    self.debugEditBox._settingText = true
+    self.debugEditBox:SetText(text)
+    self.debugEditBox._settingText = false
 
-    local textHeight = self.debugText:GetStringHeight()
-    self.debugTextContainer:SetHeight(math.max(textHeight + 20, self.debugScrollFrame:GetHeight()))
+    local numLines = #lines
+    local lineHeight = select(2, self.debugEditBox:GetFont()) or 12
+    local textHeight = numLines * (lineHeight + 2) + 20
+    self.debugEditBox:SetHeight(math.max(textHeight, self.debugScrollFrame:GetHeight()))
 
     local scrollRange = math.max(0, textHeight - self.debugScrollFrame:GetHeight())
     self.debugScrollBar:SetMinMaxValues(0, scrollRange)
