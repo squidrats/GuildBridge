@@ -893,6 +893,9 @@ function GB:RelayToGuildmates(payload, sourceGuildClubId)
 
     if self.enableTrafficDebug then
         print("|cff00ff00[Relay]|r Relaying as PRIMARY for guild " .. tostring(sourceGuildClubId))
+        if #self.guildRelayQueue > 10 then
+            print("|cffff8800[Relay]|r Guild queue size: " .. #self.guildRelayQueue)
+        end
     end
 
     table.insert(self.guildRelayQueue, payload)
@@ -915,7 +918,11 @@ function GB:ProcessGuildRelayQueue()
         local payload = table.remove(GB.guildRelayQueue, 1)
 
         local msgType
-        if payload:sub(1, 6) == "_DATA_" then
+        if payload:sub(1, 10) == "_ANNOUNCE_" then
+            local announcePayload = payload:sub(11)
+            C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, announcePayload, "GUILD")
+            msgType = "ANNOUNCE"
+        elseif payload:sub(1, 6) == "_DATA_" then
             local dataPayload = payload:sub(7)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
             msgType = "DATA"
@@ -1101,6 +1108,10 @@ function GB:RelayDataToGuildmates(payload, sourceGuildClubId)
     local hash = self:MakeMessageHash("data_relay", payload, "", "")
     if self:IsRecentGuildRelay(hash) then
         return
+    end
+
+    if self.enableTrafficDebug and #self.guildRelayQueue > 10 then
+        print("|cffff8800[Relay]|r Guild queue size: " .. #self.guildRelayQueue)
     end
 
     table.insert(self.guildRelayQueue, "_DATA_" .. payload)

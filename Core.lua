@@ -34,7 +34,7 @@ GB.guildRosters = {}
 GB.pendingRosterChunks = {}
 GB.pendingRosterDeltas = { added = {}, removed = {} }
 GB.rosterDeltaTimerScheduled = false
-GB.ROSTER_SYNC_THROTTLE = 10
+GB.ROSTER_SYNC_THROTTLE = 30
 GB.ROSTER_CHUNK_SIZE = 200
 GB.lastRosterBroadcast = 0
 GB.rosterUpdatePending = false
@@ -46,7 +46,7 @@ GB.partyMembers = {}
 
 GB.loginHandshakeTimestamp = 0
 
-GB.GUILD_RELAY_THROTTLE = 2.0
+GB.GUILD_RELAY_THROTTLE = 4.0
 GB.lastGuildRelayTime = 0
 GB.guildRelayQueue = {}
 GB.isProcessingGuildRelay = false
@@ -225,6 +225,9 @@ function GB:QueueBNetMessage(gameAccountID, prefix, payload)
         prefix = prefix,
         payload = payload,
     })
+    if self.enableTrafficDebug and #self.outgoingQueue > 20 then
+        print("|cffff8800[Traffic]|r BNet queue size: " .. #self.outgoingQueue)
+    end
     self:ProcessQueue()
 end
 
@@ -235,6 +238,9 @@ function GB:QueueWhisperMessage(prefix, payload, targetName)
         prefix = prefix,
         payload = payload,
     })
+    if self.enableTrafficDebug and #self.outgoingQueue > 20 then
+        print("|cffff8800[Traffic]|r Whisper queue size: " .. #self.outgoingQueue)
+    end
     self:ProcessQueue()
 end
 
@@ -424,10 +430,11 @@ function GB:AnnounceRelayAvailability(guildClubId, isAvailable)
     local flag = isAvailable and "1" or "0"
     local message = "[GBRA]" .. guildClubIdStr .. "|" .. flag
 
-    C_ChatInfo.SendAddonMessage(self.BRIDGE_ADDON_PREFIX, message, "GUILD")
+    table.insert(self.guildRelayQueue, "_ANNOUNCE_" .. message)
+    self:ProcessGuildRelayQueue()
 
     if self.enableTrafficDebug then
-        print("|cff00ffff[Relay]|r Announced availability=" .. flag .. " for guild " .. guildClubIdStr)
+        print("|cff00ffff[Relay]|r Queued availability=" .. flag .. " for guild " .. guildClubIdStr)
     end
 end
 

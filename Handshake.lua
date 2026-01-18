@@ -27,8 +27,23 @@ local function doSendHandshake(handshakeType, targetGameAccountID)
         GB:QueueBNetMessage(targetGameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
     else
         local friends = GB:FindOnlineWoWFriends()
+        local sentCount = 0
         for _, friend in ipairs(friends) do
-            GB:QueueBNetMessage(friend.gameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
+            local shouldSend = false
+            local connInfo = GB.connectedBridgeUsers[friend.gameAccountID]
+            if connInfo then
+                shouldSend = true
+            elseif friend.guildName and GB.allowedGuilds[friend.guildName] then
+                shouldSend = true
+            end
+
+            if shouldSend then
+                GB:QueueBNetMessage(friend.gameAccountID, GB.BRIDGE_ADDON_PREFIX, payload)
+                sentCount = sentCount + 1
+            end
+        end
+        if GB.enableTrafficDebug and sentCount > 0 then
+            print("|cff00ff00[Handshake]|r Sent to " .. sentCount .. " of " .. #friends .. " online friends")
         end
     end
 end
