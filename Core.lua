@@ -14,10 +14,37 @@ GB.lastBNetAPICall = 0
 GB.BNET_API_THROTTLE = 5
 GB.lastPlayerEnteringWorld = 0
 GB.ZONE_TRANSITION_COOLDOWN = 8
+GB.ZONE_RECOVERY_PERIOD = 30
+GB.ZONE_RECOVERY_THROTTLE = 2.5
+GB.lastGlobalSendTime = 0
 
 function GB:IsInZoneTransition()
     local now = GetTime()
     return (now - self.lastPlayerEnteringWorld) < self.ZONE_TRANSITION_COOLDOWN
+end
+
+function GB:IsInZoneRecovery()
+    local now = GetTime()
+    local timeSinceZone = now - self.lastPlayerEnteringWorld
+    return timeSinceZone >= self.ZONE_TRANSITION_COOLDOWN and
+           timeSinceZone < (self.ZONE_TRANSITION_COOLDOWN + self.ZONE_RECOVERY_PERIOD)
+end
+
+function GB:GetCurrentThrottleDelay()
+    if self:IsInZoneRecovery() then
+        return self.ZONE_RECOVERY_THROTTLE
+    end
+    return self.SEND_THROTTLE_DELAY
+end
+
+function GB:CanSendGlobally()
+    local now = GetTime()
+    local delay = self:GetCurrentThrottleDelay()
+    return (now - self.lastGlobalSendTime) >= delay
+end
+
+function GB:RecordGlobalSend()
+    self.lastGlobalSendTime = GetTime()
 end
 
 GB.currentFilter = nil
@@ -419,6 +446,13 @@ function GB:ProcessQueue()
             return
         end
 
+        -- Wait for global send coordinator
+        if not GB:CanSendGlobally() then
+            local delay = GB:GetCurrentThrottleDelay()
+            C_Timer.After(delay, processNext)
+            return
+        end
+
         local msg = table.remove(GB.outgoingQueue, 1)
 
         local msgType = "unknown"
@@ -444,24 +478,29 @@ function GB:ProcessQueue()
             end
         end
 
+        -- Record global send time BEFORE sending
+        GB:RecordGlobalSend()
+
+        local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
         if msg.type == "bnet" then
-            GB:LogDC("SEND", "BNet " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload)
+            GB:LogDC("SEND", "BNet " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload .. " mode:" .. throttleMode)
             pcall(BNSendGameData, msg.target, msg.prefix, msg.payload)
             GB.trafficStats.bnet = GB.trafficStats.bnet + 1
             if GB.enableTrafficDebug then
-                print(string.format("|cff00ff00[Traffic]|r BNet %s (queue: %d)", msgType, #GB.outgoingQueue))
+                print(string.format("|cff00ff00[Traffic]|r BNet %s [%s] (queue: %d)", msgType, throttleMode, #GB.outgoingQueue))
             end
         elseif msg.type == "whisper" then
-            GB:LogDC("SEND", "Whisper " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload)
+            GB:LogDC("SEND", "Whisper " .. msgType .. " to " .. tostring(msg.target) .. " size:" .. #msg.payload .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(msg.prefix, msg.payload, "WHISPER", msg.target)
             GB.trafficStats.whisper = GB.trafficStats.whisper + 1
             if GB.enableTrafficDebug then
-                print(string.format("|cff00ff00[Traffic]|r Whisper %s (queue: %d)", msgType, #GB.outgoingQueue))
+                print(string.format("|cff00ff00[Traffic]|r Whisper %s [%s] (queue: %d)", msgType, throttleMode, #GB.outgoingQueue))
             end
         end
 
         if #GB.outgoingQueue > 0 then
-            C_Timer.After(GB.SEND_THROTTLE_DELAY, processNext)
+            local delay = GB:GetCurrentThrottleDelay()
+            C_Timer.After(delay, processNext)
         else
             GB.isProcessingQueue = false
         end

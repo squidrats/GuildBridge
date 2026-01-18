@@ -981,31 +981,44 @@ function GB:ProcessGuildRelayQueue()
             return
         end
 
+        -- Brief check to avoid truly simultaneous sends (0.5s minimum gap)
+        local now = GetTime()
+        local timeSinceLastSend = now - GB.lastGlobalSendTime
+        if timeSinceLastSend < 0.5 then
+            C_Timer.After(0.5 - timeSinceLastSend, processNext)
+            return
+        end
+
         local payload = table.remove(GB.guildRelayQueue, 1)
 
+        -- Record global send time BEFORE sending
+        GB:RecordGlobalSend()
+
+        local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
         local msgType
         if payload:sub(1, 10) == "_ANNOUNCE_" then
             local announcePayload = payload:sub(11)
-            GB:LogDC("SEND", "Guild ANNOUNCE size:" .. #announcePayload)
+            GB:LogDC("SEND", "Guild ANNOUNCE size:" .. #announcePayload .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, announcePayload, "GUILD")
             msgType = "ANNOUNCE"
         elseif payload:sub(1, 6) == "_DATA_" then
             local dataPayload = payload:sub(7)
-            GB:LogDC("SEND", "Guild DATA size:" .. #dataPayload)
+            GB:LogDC("SEND", "Guild DATA size:" .. #dataPayload .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGD]" .. dataPayload, "GUILD")
             msgType = "DATA"
         else
-            GB:LogDC("SEND", "Guild CHAT size:" .. #payload)
+            GB:LogDC("SEND", "Guild CHAT size:" .. #payload .. " mode:" .. throttleMode)
             C_ChatInfo.SendAddonMessage(GB.BRIDGE_ADDON_PREFIX, "[GBGR]" .. payload, "GUILD")
             msgType = "CHAT"
         end
 
         GB.trafficStats.guild = GB.trafficStats.guild + 1
         if GB.enableTrafficDebug then
-            print("|cffff8800[Traffic]|r Guild " .. msgType .. " relay (queue: " .. #GB.guildRelayQueue .. ", size: " .. #payload .. " bytes)")
+            print("|cffff8800[Traffic]|r Guild " .. msgType .. " [" .. throttleMode .. "] (queue: " .. #GB.guildRelayQueue .. ", size: " .. #payload .. " bytes)")
         end
 
         if #GB.guildRelayQueue > 0 then
+            -- Use guild's own throttle, not affected by zone recovery for guild channel
             C_Timer.After(GB.GUILD_RELAY_THROTTLE, processNext)
         else
             GB.isProcessingGuildRelay = false

@@ -260,6 +260,7 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700/mn traffic|r - Toggle traffic debugging")
         print("  |cffffd700/mn events|r - Toggle event debugging (zone change, connect/disconnect)")
         print("  |cffffd700/mn stats|r - Show traffic statistics")
+        print("  |cffffd700/mn throttle|r - Show throttle/recovery mode status")
         print("  |cffffd700/mn relay|r - Toggle guild chat relay (default ON)")
         print("  |cffffd700/mn relayroster|r - Toggle roster relay to guild (default ON)")
         print("  |cffffd700/mn relaystatus|r - Show relay election status")
@@ -268,8 +269,257 @@ SlashCmdList["MDGANET"] = function(msg)
         print("  |cffffd700/mn alts|r - List registered alts")
         print("  |cffffd700/mn debug|r - Show debug info")
         print("  |cffffd700/mn help|r - Show this help")
+        print("  |cffffd700/mnstress|r - Stress test commands (for D/C debugging)")
+
+    elseif cmd == "throttle" then
+        print("|cff00ff00MNet Throttle Status:|r")
+        local now = GetTime()
+        local timeSinceZone = now - GB.lastPlayerEnteringWorld
+        local timeSinceSend = now - GB.lastGlobalSendTime
+        local inTransition = GB:IsInZoneTransition()
+        local inRecovery = GB:IsInZoneRecovery()
+        local currentDelay = GB:GetCurrentThrottleDelay()
+
+        local mode = "normal"
+        if inTransition then
+            mode = "|cffff0000PAUSED (zone transition)|r"
+        elseif inRecovery then
+            mode = "|cffff8800RECOVERY|r"
+        else
+            mode = "|cff00ff00NORMAL|r"
+        end
+
+        print("  Mode: " .. mode)
+        print("  Time since zone change: " .. string.format("%.1f", timeSinceZone) .. "s")
+        print("  Time since last send: " .. string.format("%.1f", timeSinceSend) .. "s")
+        print("  Current throttle delay: " .. currentDelay .. "s")
+        print("  Can send now: " .. (GB:CanSendGlobally() and "|cff00ff00YES|r" or "|cffff0000NO|r"))
+        print("  Queue sizes: BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
 
     else
         print("|cff00ff00MNet:|r Unknown command '" .. cmd .. "'. Use |cffffd700/mn help|r for commands.")
     end
+end
+
+-- Stress test command for debugging D/C issues
+GB.stressTestTimer = nil
+GB.stressTestRunning = false
+
+SLASH_MNSTRESS1 = "/mnstress"
+SlashCmdList["MNSTRESS"] = function(msg)
+    msg = msg:lower():trim()
+
+    if msg == "" or msg == "help" then
+        print("|cffff8800[MNet Stress Test]|r Commands:")
+        print("  |cffffd700/mnstress status|r - Show current state and queue sizes")
+        print("  |cffffd700/mnstress burst|r - Trigger handshakes + roster requests to all connections")
+        print("  |cffffd700/mnstress continuous|r - Keep queuing messages until stopped")
+        print("  |cffffd700/mnstress stop|r - Stop continuous mode")
+        print("  |cffffd700/mnstress handshake|r - Send handshakes to all connections")
+        print("  |cffffd700/mnstress roster|r - Request full rosters from all connections")
+        print("")
+        print("  |cffff0000Usage:|r Run continuous on all accounts, zone whenever, then stop")
+        if GB.stressTestRunning then
+            print("")
+            print("  |cff00ff00>>> CONTINUOUS MODE ACTIVE <<<|r")
+        end
+        return
+    end
+
+    if msg == "status" then
+        print("|cffff8800[MNet Stress Test]|r Current State:")
+        local now = GetTime()
+
+        -- Continuous mode status
+        if GB.stressTestRunning then
+            print("  |cff00ff00>>> CONTINUOUS MODE ACTIVE <<<|r")
+        end
+
+        -- Connection counts
+        local bnetCount = 0
+        for _ in pairs(GB.connectedBridgeUsers) do bnetCount = bnetCount + 1 end
+        local altCount = 0
+        for _ in pairs(GB.connectedWhisperAlts) do altCount = altCount + 1 end
+
+        print("  BNet connections: " .. bnetCount)
+        print("  Whisper alt connections: " .. altCount)
+        print("  BNet queue: " .. #GB.outgoingQueue)
+        print("  Guild relay queue: " .. #GB.guildRelayQueue)
+
+        -- Throttle state
+        local inTransition = GB:IsInZoneTransition()
+        local inRecovery = GB:IsInZoneRecovery()
+        local mode = inTransition and "|cffff0000PAUSED|r" or (inRecovery and "|cffff8800RECOVERY|r" or "|cff00ff00NORMAL|r")
+        print("  Throttle mode: " .. mode)
+        print("  Current delay: " .. GB:GetCurrentThrottleDelay() .. "s")
+
+        -- Roster sizes
+        local rosterCount = 0
+        local totalMembers = 0
+        for filterKey, roster in pairs(GB.guildRosters) do
+            rosterCount = rosterCount + 1
+            local memberCount = 0
+            if roster.members then
+                for _ in pairs(roster.members) do memberCount = memberCount + 1 end
+            end
+            totalMembers = totalMembers + memberCount
+        end
+        print("  Rosters tracked: " .. rosterCount .. " (" .. totalMembers .. " total members)")
+
+        return
+    end
+
+    if msg == "handshake" then
+        print("|cffff8800[MNet Stress Test]|r Sending handshakes to all connections...")
+
+        local count = 0
+        -- Force handshakes to BNet friends
+        GB:ForceSendHandshake()
+        for _ in pairs(GB.connectedBridgeUsers) do count = count + 1 end
+
+        -- Force handshakes to whisper alts
+        GB:ForceSendWhisperHandshake()
+        for _ in pairs(GB.connectedWhisperAlts) do count = count + 1 end
+
+        print("  Queued handshakes to " .. count .. " connections")
+        print("  Queue size now: " .. #GB.outgoingQueue)
+        return
+    end
+
+    if msg == "roster" then
+        print("|cffff8800[MNet Stress Test]|r Requesting full rosters from all connections...")
+
+        local count = 0
+        for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+            if info.guildClubId then
+                GB:RequestFullRoster(gameAccountID, info.guildClubId, "bnet")
+                count = count + 1
+            end
+        end
+
+        for altName, info in pairs(GB.connectedWhisperAlts) do
+            if info.guildClubId then
+                GB:RequestFullRoster(altName, info.guildClubId, "whisper")
+                count = count + 1
+            end
+        end
+
+        print("  Queued " .. count .. " roster requests")
+        print("  Queue size now: " .. #GB.outgoingQueue)
+        return
+    end
+
+    if msg == "burst" then
+        print("|cffff8800[MNet Stress Test]|r BURST MODE - Triggering all activity...")
+
+        -- Count connections first
+        local bnetCount = 0
+        for _ in pairs(GB.connectedBridgeUsers) do bnetCount = bnetCount + 1 end
+        local altCount = 0
+        for _ in pairs(GB.connectedWhisperAlts) do altCount = altCount + 1 end
+
+        print("  Step 1: Sending handshakes...")
+        GB:ForceSendHandshake()
+        GB:ForceSendWhisperHandshake()
+
+        print("  Step 2: Requesting rosters...")
+        local rosterCount = 0
+        for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+            if info.guildClubId then
+                GB:RequestFullRoster(gameAccountID, info.guildClubId, "bnet")
+                rosterCount = rosterCount + 1
+            end
+        end
+        for altName, info in pairs(GB.connectedWhisperAlts) do
+            if info.guildClubId then
+                GB:RequestFullRoster(altName, info.guildClubId, "whisper")
+                rosterCount = rosterCount + 1
+            end
+        end
+
+        print("  Step 3: Broadcasting roster delta...")
+        if GB.ProcessGuildRosterUpdate then
+            GB:ProcessGuildRosterUpdate()
+        end
+
+        print("")
+        print("|cffff8800[MNet Stress Test]|r Burst complete!")
+        print("  Handshakes queued to: " .. (bnetCount + altCount) .. " connections")
+        print("  Roster requests queued: " .. rosterCount)
+        print("  BNet queue size: " .. #GB.outgoingQueue)
+        print("  Guild queue size: " .. #GB.guildRelayQueue)
+        print("")
+        print("|cffff0000NOW ZONE IMMEDIATELY|r to test for D/C!")
+        return
+    end
+
+    if msg == "continuous" or msg == "start" then
+        if GB.stressTestRunning then
+            print("|cffff8800[MNet Stress Test]|r Continuous mode already running!")
+            print("  Use |cffffd700/mnstress stop|r to stop it first.")
+            return
+        end
+
+        GB.stressTestRunning = true
+        local interval = 3 -- Queue new messages every 3 seconds
+
+        print("|cffff8800[MNet Stress Test]|r Starting CONTINUOUS MODE...")
+        print("  Queuing handshakes + roster requests every " .. interval .. " seconds")
+        print("  Use |cffffd700/mnstress stop|r to stop")
+        print("")
+        print("|cff00ff00Zone whenever you want - traffic will keep flowing!|r")
+
+        local function stressLoop()
+            if not GB.stressTestRunning then
+                return
+            end
+
+            -- Queue handshakes
+            GB:ForceSendHandshake()
+            GB:ForceSendWhisperHandshake()
+
+            -- Queue roster requests
+            for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
+                if info.guildClubId then
+                    GB:RequestFullRoster(gameAccountID, info.guildClubId, "bnet")
+                end
+            end
+            for altName, info in pairs(GB.connectedWhisperAlts) do
+                if info.guildClubId then
+                    GB:RequestFullRoster(altName, info.guildClubId, "whisper")
+                end
+            end
+
+            -- Log queue size
+            if GB.enableTrafficDebug then
+                print("|cffff8800[Stress]|r Queued burst - BNet: " .. #GB.outgoingQueue .. ", Guild: " .. #GB.guildRelayQueue)
+            end
+
+            -- Schedule next burst
+            GB.stressTestTimer = C_Timer.After(interval, stressLoop)
+        end
+
+        -- Start immediately
+        stressLoop()
+        return
+    end
+
+    if msg == "stop" then
+        if not GB.stressTestRunning then
+            print("|cffff8800[MNet Stress Test]|r Continuous mode is not running.")
+            return
+        end
+
+        GB.stressTestRunning = false
+        if GB.stressTestTimer then
+            GB.stressTestTimer:Cancel()
+            GB.stressTestTimer = nil
+        end
+
+        print("|cffff8800[MNet Stress Test]|r Continuous mode |cffff0000STOPPED|r")
+        print("  Remaining queue: BNet=" .. #GB.outgoingQueue .. ", Guild=" .. #GB.guildRelayQueue)
+        return
+    end
+
+    print("|cffff8800[MNet Stress Test]|r Unknown command. Use |cffffd700/mnstress help|r")
 end
