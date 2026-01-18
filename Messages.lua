@@ -746,7 +746,11 @@ function GB:RefreshMessages()
         local myShort = self.guildShortNames[myGuildName] or myGuildName or "No Guild"
         local now = GetTime()
 
+        self.scrollFrame:AddMessage("|cffffd700My Guild:|r " .. (myGuildName or "None") .. " |cff888888(ID: " .. tostring(myGuildClubId or "nil") .. ")|r")
+        self.scrollFrame:AddMessage("")
+
         local connections = {}
+        local seenGuildIds = {}
         local debugTotal = 0
         local debugSameGuild = 0
         local debugStale = 0
@@ -769,8 +773,15 @@ function GB:RefreshMessages()
                     guildName = info.guildName,
                     guildShort = theirShort,
                     guildHomeRealm = info.guildHomeRealm or info.realmName or "",
+                    guildClubId = info.guildClubId,
                     connectionType = "bnet",
                 })
+                if info.guildClubId then
+                    seenGuildIds[tostring(info.guildClubId)] = {
+                        guildName = info.guildName,
+                        guildHomeRealm = info.guildHomeRealm,
+                    }
+                end
             end
         end
 
@@ -787,8 +798,15 @@ function GB:RefreshMessages()
                         guildName = info.guildName,
                         guildShort = theirShort,
                         guildHomeRealm = info.guildHomeRealm or info.realmName or "",
+                        guildClubId = info.guildClubId,
                         connectionType = "whisper",
                     })
+                    if info.guildClubId then
+                        seenGuildIds[tostring(info.guildClubId)] = {
+                            guildName = info.guildName,
+                            guildHomeRealm = info.guildHomeRealm,
+                        }
+                    end
                 end
             end
         end
@@ -809,8 +827,13 @@ function GB:RefreshMessages()
                                 guildName = guildName,
                                 guildShort = theirShort,
                                 guildHomeRealm = guildHomeRealm or "",
+                                guildClubId = guildClubIdStr,
                                 connectionType = "guild-relay",
                             })
+                            seenGuildIds[guildClubIdStr] = {
+                                guildName = guildName,
+                                guildHomeRealm = guildHomeRealm,
+                            }
                         end
                     end
                 end
@@ -823,13 +846,18 @@ function GB:RefreshMessages()
                 self.scrollFrame:AddMessage("|cff888888(Total: " .. debugTotal .. ", Same Guild: " .. debugSameGuild .. ", Stale: " .. debugStale .. ")|r")
             end
         else
+            self.scrollFrame:AddMessage("|cffffd700Connected Guilds:|r")
+            for guildIdStr, guildInfo in pairs(seenGuildIds) do
+                local guildDisplay = guildInfo.guildName or "Unknown"
+                if guildInfo.guildHomeRealm then
+                    guildDisplay = guildDisplay .. "-" .. guildInfo.guildHomeRealm
+                end
+                self.scrollFrame:AddMessage("  |cff00ff00" .. guildDisplay .. "|r |cff888888(ID: " .. guildIdStr .. ")|r")
+            end
+            self.scrollFrame:AddMessage("")
+
+            self.scrollFrame:AddMessage("|cffffd700Connections:|r")
             for _, conn in ipairs(connections) do
-                local myRealmSuffix = myGuildHomeRealm and myGuildHomeRealm ~= "" and ("-" .. myGuildHomeRealm) or ""
-                local theirRealmSuffix = conn.guildHomeRealm ~= "" and ("-" .. conn.guildHomeRealm) or ""
-
-                local leftSide = "|cffffd700<" .. myShort .. myRealmSuffix .. ">|r |cff00ff00" .. myName .. "|r"
-                local rightSide = "|cff00ff00" .. conn.charName .. "|r |cffffd700<" .. conn.guildShort .. theirRealmSuffix .. ">|r"
-
                 local connIndicator = ""
                 if conn.connectionType == "whisper" then
                     connIndicator = " |cffaaaaaa(alt)|r"
@@ -837,7 +865,12 @@ function GB:RefreshMessages()
                     connIndicator = " |cffaaaaaa(guild relay)|r"
                 end
 
-                self.scrollFrame:AddMessage(leftSide .. "  |cff888888<-->|r  " .. rightSide .. connIndicator)
+                local charDisplay = conn.charName
+                if conn.charRealm and conn.charRealm ~= "" then
+                    charDisplay = charDisplay .. "-" .. conn.charRealm
+                end
+
+                self.scrollFrame:AddMessage("  |cff00ff00" .. charDisplay .. "|r in |cffffd700<" .. conn.guildShort .. ">|r" .. connIndicator)
             end
         end
 
