@@ -13,6 +13,7 @@ GB.eventFrame:RegisterEvent("PLAYER_LOGOUT")
 GB.eventFrame:RegisterEvent("CHAT_MSG_SYSTEM")
 GB.eventFrame:RegisterEvent("GUILD_ROSTER_UPDATE")
 GB.eventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+GB.eventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 
 GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "ADDON_LOADED" then
@@ -433,6 +434,14 @@ GB.eventFrame:SetScript("OnEvent", function(self, event, ...)
                     GB:ProcessPartyUpdate()
                 end
             end)
+        end
+
+    elseif event == "ZONE_CHANGED_NEW_AREA" then
+        -- Protect against seamless zone transitions (flying between zones)
+        -- PLAYER_ENTERING_WORLD doesn't fire for these, so we need this event
+        GB.lastPlayerEnteringWorld = GetTime()
+        if GB.enableEventDebug then
+            print("|cffff8800[Event]|r ZONE_CHANGED_NEW_AREA - activating zone transition protection")
         end
     end
 end)

@@ -214,6 +214,11 @@ function GB:SendBridgePayload(originName, originRealm, messageText, sourceType, 
         return
     end
 
+    -- Skip sending during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then
+        return
+    end
+
     if #self.onlineFriends == 0 then
         self.onlineFriends = self:FindOnlineWoWFriends()
     end
@@ -246,6 +251,11 @@ end
 
 function GB:SendWhisperBridgePayload(originName, originRealm, messageText, sourceType, targetFilter, messageId, overrideGuild, overrideGuildRealm, overrideGuildHomeRealm, classFile, overrideGuildClubId, excludeSender)
     if not messageText or messageText == "" then
+        return
+    end
+
+    -- Skip sending during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then
         return
     end
 
@@ -465,6 +475,11 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
         return
     end
 
+    -- Skip relaying during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then
+        return
+    end
+
     self:SendBridgePayload(originName, originRealm, text, "G", nil, nil, nil, nil, nil, classFile)
     self:SendWhisperBridgePayload(originName, originRealm, text, "G", nil, nil, nil, nil, nil, classFile)
 end
@@ -596,6 +611,11 @@ end
 
 function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilter, messageId, originGuild, originGuildRealm, originGuildHomeRealm, classFile, originGuildClubId)
     if not messageText or messageText == "" then
+        return
+    end
+
+    -- Skip relaying during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then
         return
     end
 
@@ -915,6 +935,9 @@ function GB:RelayToGuildmates(payload, sourceGuildClubId)
 
     if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
 
+    -- Skip relaying during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then return end
+
     if sourceGuildClubId and not self:AmIPrimaryRelayForGuild(sourceGuildClubId) then
         if self.enableTrafficDebug then
             print("|cffff8800[Relay]|r Skipping relay - not primary for guild " .. tostring(sourceGuildClubId))
@@ -948,6 +971,12 @@ function GB:ProcessGuildRelayQueue()
     local function processNext()
         if #GB.guildRelayQueue == 0 then
             GB.isProcessingGuildRelay = false
+            return
+        end
+
+        -- Pause queue processing during zone transitions
+        if GB:IsInZoneTransition() then
+            C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, processNext)
             return
         end
 
@@ -1133,6 +1162,9 @@ end
 function GB:RelayDataToGuildmates(payload, sourceGuildClubId)
     if not IsInGuild() then return end
     if not MNetDB.bridgeEnabled or not MNetDB.enableGuildRelay then return end
+
+    -- Skip relaying during zone transitions to prevent D/C
+    if self:IsInZoneTransition() then return end
 
     if sourceGuildClubId and not self:AmIPrimaryRelayForGuild(sourceGuildClubId) then
         if self.enableTrafficDebug then

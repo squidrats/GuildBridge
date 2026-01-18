@@ -96,6 +96,11 @@ local function lookupCharacterName(gameAccountID)
         return nil, nil
     end
 
+    -- Avoid BNet API calls during zone transitions
+    if GB:IsInZoneTransition() then
+        return nil, nil
+    end
+
     local success, numFriends = pcall(BNGetNumFriends)
     if not success or not numFriends or numFriends == 0 then
         return nil, nil
@@ -206,28 +211,31 @@ function GB:HandleHandshakeMessage(message, senderGameAccountID)
         self:RefreshMessages()
     end
 
-    if MNetDB.enableGuildRelay and guildClubId then
-        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
-            self:AnnounceRelayAvailability(guildClubId, true)
+    -- Skip relay announcements and responses during zone transitions
+    if not self:IsInZoneTransition() then
+        if MNetDB.enableGuildRelay and guildClubId then
+            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+            if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+                self:AnnounceRelayAvailability(guildClubId, true)
 
-            local metaPayload = "[GBGM]" .. tostring(guildClubId) .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
-            if self.RelayDataToGuildmates then
-                self:RelayDataToGuildmates(metaPayload, guildClubId)
+                local metaPayload = "[GBGM]" .. tostring(guildClubId) .. "|" .. guildName .. "|" .. (guildHomeRealm or "")
+                if self.RelayDataToGuildmates then
+                    self:RelayDataToGuildmates(metaPayload, guildClubId)
+                end
             end
         end
-    end
 
-    if handshakeType == "HELLO" then
-        self:SendHandshakeMessage("PONG", senderGameAccountID)
-    end
+        if handshakeType == "HELLO" then
+            self:SendHandshakeMessage("PONG", senderGameAccountID)
+        end
 
-    if guildClubId and self.QueueRosterRequest then
-        local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
-        local roster = self.guildRosters[filterKey]
+        if guildClubId and self.QueueRosterRequest then
+            local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
+            local roster = self.guildRosters[filterKey]
 
-        if not roster or not roster.members then
-            self:QueueRosterRequest(senderGameAccountID, guildClubId, "bnet")
+            if not roster or not roster.members then
+                self:QueueRosterRequest(senderGameAccountID, guildClubId, "bnet")
+            end
         end
     end
 
@@ -400,23 +408,26 @@ function GB:HandleWhisperHandshakeMessage(message, senderName)
         self:RefreshMessages()
     end
 
-    if MNetDB.enableGuildRelay and guildClubId then
-        local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
-        if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
-            self:AnnounceRelayAvailability(guildClubId, true)
+    -- Skip relay announcements and responses during zone transitions
+    if not self:IsInZoneTransition() then
+        if MNetDB.enableGuildRelay and guildClubId then
+            local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+            if myGuildClubId and tostring(myGuildClubId) ~= tostring(guildClubId) then
+                self:AnnounceRelayAvailability(guildClubId, true)
+            end
         end
-    end
 
-    if handshakeType == "HELLO" then
-        doSendWhisperHandshake("PONG", senderName)
-    end
+        if handshakeType == "HELLO" then
+            doSendWhisperHandshake("PONG", senderName)
+        end
 
-    if guildClubId and self.QueueRosterRequest then
-        local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
-        local roster = self.guildRosters[filterKey]
+        if guildClubId and self.QueueRosterRequest then
+            local filterKey = self:MakeFilterKey(guildName, guildHomeRealm)
+            local roster = self.guildRosters[filterKey]
 
-        if not roster or not roster.members then
-            self:QueueRosterRequest(senderName, guildClubId, "whisper")
+            if not roster or not roster.members then
+                self:QueueRosterRequest(senderName, guildClubId, "whisper")
+            end
         end
     end
 

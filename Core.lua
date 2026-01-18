@@ -295,6 +295,12 @@ function GB:ProcessQueue()
             return
         end
 
+        -- Pause queue processing during zone transitions
+        if GB:IsInZoneTransition() then
+            C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, processNext)
+            return
+        end
+
         local msg = table.remove(GB.outgoingQueue, 1)
 
         local msgType = "unknown"

@@ -222,6 +222,12 @@ function GB:ProcessRosterRequestQueue()
             return
         end
 
+        -- Pause queue processing during zone transitions
+        if GB:IsInZoneTransition() then
+            C_Timer.After(GB.ZONE_TRANSITION_COOLDOWN, processNext)
+            return
+        end
+
         local req = table.remove(GB.rosterRequestQueue, 1)
 
         local payload = "[GBRR]" .. req.guildClubId
@@ -291,7 +297,13 @@ local function doSendRosterDeltas()
 
     if deltaStr == "" then return end
 
-    local payload = "[GBRD]" .. roster.version .. "|" .. myGuildClubId .. "|" .. deltaStr
+    -- Count current members for sync validation
+    local memberCount = 0
+    for _ in pairs(roster.members) do
+        memberCount = memberCount + 1
+    end
+
+    local payload = "[GBRD]" .. roster.version .. "|" .. myGuildClubId .. "|" .. memberCount .. "|" .. deltaStr
 
     for gameAccountID, info in pairs(GB.connectedBridgeUsers) do
         if info.guildClubId ~= myGuildClubId then
@@ -389,6 +401,9 @@ end
 function GB:HandleRosterRequest(payload, senderID, senderType)
     local guildClubId = payload
     if not guildClubId then return end
+
+    -- Skip sending roster during zone transitions
+    if self:IsInZoneTransition() then return end
 
     local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
     if not myGuildClubId or tostring(myGuildClubId) ~= tostring(guildClubId) then
@@ -541,7 +556,15 @@ function GB:AssembleAndApplyRoster(guildClubId, pending)
 end
 
 function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
-    local version, guildClubId, changes = payload:match("([^|]+)|([^|]+)|(.+)")
+    -- Try new format first: version|guildClubId|memberCount|changes
+    local version, guildClubId, remoteMemberCount, changes = payload:match("([^|]+)|([^|]+)|(%d+)|(.+)")
+
+    -- Fall back to old format: version|guildClubId|changes
+    if not changes then
+        version, guildClubId, changes = payload:match("([^|]+)|([^|]+)|(.+)")
+        remoteMemberCount = nil
+    end
+
     if not version or not guildClubId or not changes then return end
 
     if not self:IsAllowedGuildId(guildClubId) then return end
@@ -559,6 +582,7 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     end
 
     version = tonumber(version)
+    remoteMemberCount = remoteMemberCount and tonumber(remoteMemberCount) or nil
 
     local filterKey = self:FindFilterKeyByClubId(guildClubId)
     if not filterKey then
@@ -571,7 +595,7 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     end
 
     local roster = self.guildRosters[filterKey]
-    if not roster then
+    if not roster or not roster.members then
         if senderType == "whisper" then
             self:RequestFullRoster(senderID, guildClubId, "whisper")
         else
@@ -581,6 +605,42 @@ function GB:HandleRosterDeltaMessage(payload, senderID, senderType)
     end
 
     if version <= roster.version then return end
+
+    -- Count local members and compare with remote count
+    if remoteMemberCount then
+        local localMemberCount = 0
+        for _ in pairs(roster.members) do
+            localMemberCount = localMemberCount + 1
+        end
+
+        -- Count how many adds/removes are in the delta
+        local deltaAdds, deltaRemoves = 0, 0
+        for change in changes:gmatch("[^,]+") do
+            local prefix = change:sub(1, 1)
+            if prefix == "+" then
+                deltaAdds = deltaAdds + 1
+            elseif prefix == "-" then
+                deltaRemoves = deltaRemoves + 1
+            end
+        end
+
+        -- Expected local count after applying delta should match remote count
+        local expectedCount = localMemberCount + deltaAdds - deltaRemoves
+        local countDiff = math.abs(expectedCount - remoteMemberCount)
+
+        -- If counts differ by more than 5, roster is out of sync - request full roster
+        if countDiff > 5 then
+            if self.enableTrafficDebug then
+                print("|cffff8800[Roster]|r Count mismatch: local=" .. localMemberCount .. " expected=" .. expectedCount .. " remote=" .. remoteMemberCount .. " - requesting full roster")
+            end
+            if senderType == "whisper" then
+                self:RequestFullRoster(senderID, guildClubId, "whisper")
+            else
+                self:RequestFullRoster(senderID, guildClubId, "bnet")
+            end
+            return
+        end
+    end
 
     for change in changes:gmatch("[^,]+") do
         local prefix = change:sub(1, 1)
