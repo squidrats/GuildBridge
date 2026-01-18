@@ -753,6 +753,7 @@ end
 
 function GB:RefreshMessages()
     if not self.scrollFrame then return end
+    self.scrollFrame._isRefreshing = true
     self.scrollFrame:Clear()
 
     if self.currentPage == "status" then
@@ -897,9 +898,16 @@ function GB:RefreshMessages()
             end
         end
 
-        if self.updateScrollBar then
-            self.updateScrollBar()
-        end
+        self.scrollFrame._isRefreshing = false
+        -- Delay scroll to top for status page
+        C_Timer.After(0.02, function()
+            if self.scrollFrame and self.scrollFrame._scrollFrame then
+                self.scrollFrame._scrollFrame:SetVerticalScroll(0)
+                if self.updateScrollBar then
+                    self.updateScrollBar()
+                end
+            end
+        end)
         return
     end
 
@@ -910,9 +918,17 @@ function GB:RefreshMessages()
         end
     end
 
-    if self.updateScrollBar then
-        self.updateScrollBar()
-    end
+    self.scrollFrame._isRefreshing = false
+    -- Delay scroll to bottom to ensure WoW has calculated the correct scroll range
+    C_Timer.After(0.02, function()
+        if self.scrollFrame and self.scrollFrame._scrollFrame then
+            local scrollMax = self.scrollFrame._scrollFrame:GetVerticalScrollRange()
+            self.scrollFrame._scrollFrame:SetVerticalScroll(scrollMax)
+            if self.updateScrollBar then
+                self.updateScrollBar()
+            end
+        end
+    end)
 end
 
 function GB:IsRecentGuildRelay(hash)

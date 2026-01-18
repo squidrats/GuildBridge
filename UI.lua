@@ -1547,6 +1547,7 @@ function GB:CreateBridgeUI()
         _scrollFrame = chatScrollFrame,
         _messages = {},
         _maxLines = 500,
+        _isRefreshing = false,
 
         AddMessage = function(self, msg)
             table.insert(self._messages, msg)
@@ -1556,13 +1557,16 @@ function GB:CreateBridgeUI()
             local fullText = table.concat(self._messages, "\n")
             self._editBox.expectedText = fullText
             self._editBox:SetText(fullText)
-            C_Timer.After(0.01, function()
-                local scrollMax = self._scrollFrame:GetVerticalScrollRange()
-                self._scrollFrame:SetVerticalScroll(scrollMax)
-                if GB.updateScrollBar then
-                    GB.updateScrollBar()
-                end
-            end)
+            -- Only auto-scroll to bottom for new incoming messages, not during refresh
+            if not self._isRefreshing then
+                C_Timer.After(0.01, function()
+                    local scrollMax = self._scrollFrame:GetVerticalScrollRange()
+                    self._scrollFrame:SetVerticalScroll(scrollMax)
+                    if GB.updateScrollBar then
+                        GB.updateScrollBar()
+                    end
+                end)
+            end
         end,
 
         Clear = function(self)
