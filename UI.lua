@@ -2079,10 +2079,6 @@ function GB:UpdateDebugDisplay()
     local throttleMode
     if self:IsInZoneTransition() then
         throttleMode = "|cffff0000PAUSED|r"
-    elseif self:IsInZoneRecovery() and isDataThrottled then
-        throttleMode = "|cffff0000RECOVERY+DATA|r"
-    elseif self:IsInZoneRecovery() then
-        throttleMode = "|cffff8800RECOVERY|r"
     elseif isDataThrottled then
         throttleMode = "|cffff8800DATA THROTTLE|r"
     else

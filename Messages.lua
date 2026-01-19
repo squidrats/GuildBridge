@@ -1010,7 +1010,8 @@ function GB:ProcessGuildRelayQueue()
         -- Record global send time BEFORE sending
         GB:RecordGlobalSend()
 
-        local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
+        local bytesPerSec = GB:GetBytesPerSecond()
+        local throttleMode = (bytesPerSec > GB.BYTES_THROTTLE_THRESHOLD) and "throttled" or "normal"
         local msgType
         local bytesSent = 0
         if payload:sub(1, 10) == "_ANNOUNCE_" then

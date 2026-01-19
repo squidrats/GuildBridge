@@ -281,19 +281,21 @@ SlashCmdList["MDGANET"] = function(msg)
         local timeSinceZone = now - GB.lastPlayerEnteringWorld
         local timeSinceSend = now - GB.lastGlobalSendTime
         local inTransition = GB:IsInZoneTransition()
-        local inRecovery = GB:IsInZoneRecovery()
+        local bytesPerSec = GB:GetBytesPerSecond()
+        local isDataThrottled = bytesPerSec > GB.BYTES_THROTTLE_THRESHOLD
         local currentDelay = GB:GetCurrentThrottleDelay()
 
         local mode = "normal"
         if inTransition then
             mode = "|cffff0000PAUSED (zone transition)|r"
-        elseif inRecovery then
-            mode = "|cffff8800RECOVERY|r"
+        elseif isDataThrottled then
+            mode = "|cffff8800DATA THROTTLE|r"
         else
             mode = "|cff00ff00NORMAL|r"
         end
 
         print("  Mode: " .. mode)
+        print("  Data rate: " .. string.format("%.0f", bytesPerSec) .. " B/s (throttle at " .. GB.BYTES_THROTTLE_THRESHOLD .. ")")
         print("  Time since zone change: " .. string.format("%.1f", timeSinceZone) .. "s")
         print("  Time since last send: " .. string.format("%.1f", timeSinceSend) .. "s")
         print("  Current throttle delay: " .. currentDelay .. "s")
@@ -352,9 +354,11 @@ SlashCmdList["MNSTRESS"] = function(msg)
 
         -- Throttle state
         local inTransition = GB:IsInZoneTransition()
-        local inRecovery = GB:IsInZoneRecovery()
-        local mode = inTransition and "|cffff0000PAUSED|r" or (inRecovery and "|cffff8800RECOVERY|r" or "|cff00ff00NORMAL|r")
+        local bytesPerSec = GB:GetBytesPerSecond()
+        local isDataThrottled = bytesPerSec > GB.BYTES_THROTTLE_THRESHOLD
+        local mode = inTransition and "|cffff0000PAUSED|r" or (isDataThrottled and "|cffff8800DATA THROTTLE|r" or "|cff00ff00NORMAL|r")
         print("  Throttle mode: " .. mode)
+        print("  Data rate: " .. string.format("%.0f", bytesPerSec) .. " B/s")
         print("  Current delay: " .. GB:GetCurrentThrottleDelay() .. "s")
 
         -- Roster sizes

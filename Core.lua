@@ -14,8 +14,6 @@ GB.lastBNetAPICall = 0
 GB.BNET_API_THROTTLE = 5
 GB.lastPlayerEnteringWorld = 0
 GB.ZONE_TRANSITION_COOLDOWN = 8
-GB.ZONE_RECOVERY_PERIOD = 30
-GB.ZONE_RECOVERY_THROTTLE = 2.5
 GB.lastGlobalSendTime = 0
 
 function GB:IsInZoneTransition()
@@ -23,20 +21,8 @@ function GB:IsInZoneTransition()
     return (now - self.lastPlayerEnteringWorld) < self.ZONE_TRANSITION_COOLDOWN
 end
 
-function GB:IsInZoneRecovery()
-    local now = GetTime()
-    local timeSinceZone = now - self.lastPlayerEnteringWorld
-    return timeSinceZone >= self.ZONE_TRANSITION_COOLDOWN and
-           timeSinceZone < (self.ZONE_TRANSITION_COOLDOWN + self.ZONE_RECOVERY_PERIOD)
-end
-
 function GB:GetCurrentThrottleDelay()
     local baseDelay = self.SEND_THROTTLE_DELAY
-
-    -- Use slower throttle during zone recovery
-    if self:IsInZoneRecovery() then
-        baseDelay = self.ZONE_RECOVERY_THROTTLE
-    end
 
     -- Adaptive throttle: slow down if sending too much data
     local bytesPerSec = self:GetBytesPerSecond()
@@ -548,7 +534,8 @@ function GB:ProcessQueue()
         -- Record global send time BEFORE sending
         GB:RecordGlobalSend()
 
-        local throttleMode = GB:IsInZoneRecovery() and "recovery" or "normal"
+        local bytesPerSec = GB:GetBytesPerSecond()
+        local throttleMode = (bytesPerSec > GB.BYTES_THROTTLE_THRESHOLD) and "throttled" or "normal"
         local payloadSize = #msg.payload
 
         if msg.type == "bnet" then
