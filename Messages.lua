@@ -574,6 +574,12 @@ function GB:HandleBNAddonMessage(prefix, message, senderID)
         return
     end
 
+    -- Skip guild messages from my own guild - I've already seen them in native guild chat
+    local myGuildClubId = getGuildClubId()
+    if sourcePart == "G" and myGuildClubId and tostring(guildClubIdPart) == tostring(myGuildClubId) then
+        return
+    end
+
     local hash = self:MakeMessageHash(guildPart or "", originPart, originRealmPart or "", messagePart)
     if self:IsDuplicateMessage(hash) then
         return
@@ -624,8 +630,8 @@ function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilte
     for _, friend in ipairs(self.onlineFriends) do
         local connInfo = self.connectedBridgeUsers[friend.gameAccountID]
         if connInfo and connInfo.guildClubId and self:IsAllowedGuildId(connInfo.guildClubId) then
-            local friendGuildName = connInfo.guildName
-            if friendGuildName and friendGuildName ~= originGuild then
+            -- Use club ID comparison since all MDGA guilds share the same name
+            if originGuildClubId and tostring(connInfo.guildClubId) ~= tostring(originGuildClubId) then
                 self:QueueBNetMessage(friend.gameAccountID, self.BRIDGE_ADDON_PREFIX, payload)
             end
         end
@@ -634,7 +640,8 @@ function GB:RelayToOtherGuilds(originName, originRealm, messageText, targetFilte
     local now = GetTime()
     for altName, info in pairs(self.connectedWhisperAlts) do
         if now - info.lastSeen < 300 then
-            if info.guildClubId and self:IsAllowedGuildId(info.guildClubId) and info.guildName ~= originGuild then
+            -- Use club ID comparison since all MDGA guilds share the same name
+            if info.guildClubId and self:IsAllowedGuildId(info.guildClubId) and originGuildClubId and tostring(info.guildClubId) ~= tostring(originGuildClubId) then
                 self:QueueWhisperMessage(self.BRIDGE_ADDON_PREFIX, payload, altName)
             end
         end
@@ -714,10 +721,16 @@ function GB:HandleWhisperAddonMessage(prefix, message, sender)
         return
     end
 
+    -- Skip guild messages from my own guild - I've already seen them in native guild chat
+    local myGuildClubId = getGuildClubId()
+    if sourcePart == "G" and myGuildClubId and tostring(guildClubIdPart) == tostring(myGuildClubId) then
+        return
+    end
+
     local displayInTargetTab = nil
     if targetPart and targetPart ~= "" then
         local myGuildName = GetGuildInfo("player")
-        local myGuildClubId = getGuildClubId()
+        myGuildClubId = getGuildClubId()
         local myGuildHomeRealm = self:GetGuildHomeRealm() or GetRealmName()
         local myFilterKeyClub = myGuildName and myGuildClubId and (myGuildName .. "-" .. myGuildClubId)
         local myFilterKeyRealm = myGuildName and myGuildHomeRealm and (myGuildName .. "-" .. myGuildHomeRealm)
@@ -1107,6 +1120,12 @@ function GB:HandleGuildRelayMessage(payload, sender)
     end
 
     if not guildClubIdPart or not self:IsAllowedGuildId(guildClubIdPart) then
+        return
+    end
+
+    -- Skip messages that originated from my own guild (prevents duplicate display)
+    local myGuildClubId = C_Club and C_Club.GetGuildClubId and C_Club.GetGuildClubId()
+    if myGuildClubId and tostring(guildClubIdPart) == tostring(myGuildClubId) then
         return
     end
 
