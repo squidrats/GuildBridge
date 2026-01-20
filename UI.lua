@@ -1557,6 +1557,12 @@ function GB:CreateBridgeUI()
             local fullText = table.concat(self._messages, "\n")
             self._editBox.expectedText = fullText
             self._editBox:SetText(fullText)
+            -- Explicitly set editbox height to ensure scroll range is calculated correctly
+            local numLines = #self._messages
+            local _, fontHeight = self._editBox:GetFont()
+            local lineHeight = fontHeight or 14
+            local textHeight = numLines * (lineHeight + 2) + 10
+            self._editBox:SetHeight(math.max(textHeight, self._scrollFrame:GetHeight()))
             -- Only auto-scroll to bottom for new incoming messages, not during refresh
             if not self._isRefreshing then
                 C_Timer.After(0.01, function()
@@ -1573,6 +1579,12 @@ function GB:CreateBridgeUI()
             self._messages = {}
             self._editBox.expectedText = ""
             self._editBox:SetText("")
+            -- Set editbox height to minimum and reset scroll
+            self._editBox:SetHeight(self._scrollFrame:GetHeight())
+            self._scrollFrame:SetVerticalScroll(0)
+            if GB.updateScrollBar then
+                GB.updateScrollBar()
+            end
         end,
 
         GetNumMessages = function(self)
