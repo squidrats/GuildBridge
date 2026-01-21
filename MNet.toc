@@ -1,4 +1,4 @@
-## Interface: 110002
+## Interface: 120000
 ## Title: MNet
 ## Notes: Cross-guild chat network for MDGA guilds
 ## Author: You
