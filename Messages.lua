@@ -376,7 +376,7 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     if not IsInGuild() then
         return
     end
-    if not text or text == "" then
+    if not text or type(text) ~= "string" or text == "" then
         return
     end
 
