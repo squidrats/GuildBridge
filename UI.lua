@@ -1753,6 +1753,40 @@ function GB:CreateBridgeUI()
     end)
 
     chatEditBox:SetScript("OnHyperlinkClick", function(frame, link, text, button)
+        -- Handle player links with custom menu to avoid taint (blocks "Copy Character Name" etc.)
+        local linkType, linkData = link:match("^(%a+):(.+)")
+        if linkType == "player" and button == "RightButton" then
+            local fullName = linkData:match("([^:]+)")
+            if fullName and Menu and Menu.GetManager then
+                MenuUtil.CreateContextMenu(nil, function(owner, rootDescription)
+                    rootDescription:CreateTitle(fullName)
+                    rootDescription:CreateButton("Whisper", function()
+                        ChatFrame_OpenChat("/w " .. fullName .. " ")
+                    end)
+                    rootDescription:CreateButton("Invite", function()
+                        C_PartyInfo.InviteUnit(fullName)
+                    end)
+                    rootDescription:CreateButton("Ignore", function()
+                        AddIgnore(fullName)
+                    end)
+                    rootDescription:CreateButton("Report Player", function()
+                        PlayerReportFrame:InitiateReport(Enum.ReportType.Chat, fullName)
+                    end)
+                    rootDescription:CreateButton("Copy Name", function()
+                        local editBox = ChatFrame1EditBox
+                        if editBox then
+                            editBox:SetText(fullName)
+                            editBox:Show()
+                            editBox:SetFocus()
+                            editBox:HighlightText()
+                        end
+                    end)
+                    rootDescription:CreateButton(CANCEL, function() end)
+                end)
+                return
+            end
+        end
+        -- For non-player links (items, spells, etc.) or left-clicks, use default handling
         SetItemRef(link, text, button)
     end)
 

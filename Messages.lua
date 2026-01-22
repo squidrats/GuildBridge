@@ -1,22 +1,16 @@
 local addonName, GB = ...
 
-local function SetupGuildLinkHook()
-    local originalSetItemRef = SetItemRef
-    SetItemRef = function(link, text, button, chatFrame)
-        if link and link:match("^channel:GUILDBRIDGE") then
-            if button == "RightButton" then
-                return originalSetItemRef("channel:GUILD", text, button, chatFrame)
-            elseif button == "LeftButton" then
-                ChatFrame_OpenChat("/g ", chatFrame)
-                return
-            end
-            return
+-- Use hooksecurefunc to avoid tainting the UI (which blocks "Copy Character Name" etc.)
+hooksecurefunc("SetItemRef", function(link, text, button, chatFrame)
+    if link and link:match("^channel:GUILDBRIDGE") then
+        if button == "RightButton" then
+            -- Show guild chat context menu
+            SetItemRef("channel:GUILD", text, button, chatFrame)
+        elseif button == "LeftButton" then
+            ChatFrame_OpenChat("/g ", chatFrame)
         end
-        return originalSetItemRef(link, text, button, chatFrame)
     end
-end
-
-SetupGuildLinkHook()
+end)
 
 local function getGuildClubId()
     if C_Club and C_Club.GetGuildClubId then
