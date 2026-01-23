@@ -376,7 +376,8 @@ function GB:HandleGuildChatMessage(text, sender, _, _, _, _, _, _, _, _, _, guid
     if not IsInGuild() then
         return
     end
-    if not text or type(text) ~= "string" or text == "" then
+    local ok, isEmpty = pcall(function() return not text or text == "" end)
+    if not ok or isEmpty then
         return
     end
 
